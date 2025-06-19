@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from utils.dataloader import CombinedDataset, combined_transform
-from utils.metrics import calculate_metrics, combined_loss
+from utils.metrics import calculate_metrics, combined_loss, calculate_iou, calculate_dice, calculate_accuracy
 from models.unet import UNet3D
 import numpy as np
 import csv
@@ -23,7 +23,7 @@ def format_time(seconds):
 def create_experiment_name(args):
     """Create a unique experiment name based on parameters."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    param_str = f"bs{args.batch_size}_ep{args.epochs}_lr{args.lr}"
+    param_str = f"bs{args.batch_size}_ep{args.epochs}_lr{args.lr}_wd{args.weight_decay}"
     return f"exp_{timestamp}_{param_str}"
 
 def plot_training_metrics(log_file, save_dir):
@@ -122,33 +122,35 @@ def train_one_epoch(model, loader, optimizer, accelerator, epoch, args):
         with accelerator.accumulate(model):
             optimizer.zero_grad()
             outputs = model(images)
-            loss = combined_loss(outputs, labels.float())
+            loss = combined_loss(outputs, labels)  # Now handles multi-class
             accelerator.backward(loss)
             optimizer.step()
-
-        # Calculate metrics
-        outputs = torch.sigmoid(outputs)
-        dice, iou, acc = calculate_metrics(outputs, labels)
-
-        # Wrap scalar values as tensors for gathering
-        gathered_loss = accelerator.gather(torch.tensor(loss.item(), device=accelerator.device)).mean().item()
-        gathered_dice = accelerator.gather(torch.tensor(dice, device=accelerator.device)).mean().item()
-        gathered_iou = accelerator.gather(torch.tensor(iou, device=accelerator.device)).mean().item()
-        gathered_acc = accelerator.gather(torch.tensor(acc, device=accelerator.device)).mean().item()
-
-        # Accumulate gathered values
-        running_loss += gathered_loss
-        total_dice += gathered_dice
-        total_iou += gathered_iou
-        total_acc += gathered_acc
-
-        # Only update progress bar on main process
-        if accelerator.is_main_process:
-            progress_bar.set_postfix(loss=gathered_loss, iou=gathered_iou, dice=gathered_dice, acc=gathered_acc)
             
-            # Log GPU usage every 10 batches
-            if i % 10 == 0:
-                log_gpu_usage(os.path.join(args.experiment_dir, args.experiment_name, 'logs', 'gpu_usage.log'))
+            # Calculate metrics
+            with torch.no_grad():
+                iou = calculate_iou(outputs, labels)
+                dice = calculate_dice(outputs, labels)
+                acc = calculate_accuracy(outputs, labels)
+
+            # Wrap scalar values as tensors for gathering
+            gathered_loss = accelerator.gather(torch.tensor(loss.item(), device=accelerator.device)).mean().item()
+            gathered_dice = accelerator.gather(torch.tensor(dice, device=accelerator.device)).mean().item()
+            gathered_iou = accelerator.gather(torch.tensor(iou, device=accelerator.device)).mean().item()
+            gathered_acc = accelerator.gather(torch.tensor(acc, device=accelerator.device)).mean().item()
+
+            # Accumulate gathered values
+            running_loss += gathered_loss
+            total_dice += gathered_dice
+            total_iou += gathered_iou
+            total_acc += gathered_acc
+
+            # Only update progress bar on main process
+            if accelerator.is_main_process:
+                progress_bar.set_postfix(loss=gathered_loss, iou=gathered_iou, dice=gathered_dice, acc=gathered_acc)
+                
+                # Log GPU usage every 10 batches
+                if i % 10 == 0:
+                    log_gpu_usage(os.path.join(args.experiment_dir, args.experiment_name, 'logs', 'gpu_usage.log'))
 
     return (running_loss / num_batches,
             total_iou / num_batches,
@@ -171,10 +173,12 @@ def evaluate(model, loader, accelerator, epoch, args):
     with torch.no_grad():
         for i, (images, labels) in enumerate(progress_bar):
             outputs = model(images)
-            loss = combined_loss(outputs, labels.float())
-            outputs = torch.sigmoid(outputs)
+            loss = combined_loss(outputs, labels)  # Now handles multi-class
             
-            dice, iou, acc = calculate_metrics(outputs, labels)
+            # Calculate metrics
+            iou = calculate_iou(outputs, labels)
+            dice = calculate_dice(outputs, labels)
+            acc = calculate_accuracy(outputs, labels)
             
             # Gather metrics from all processes
             gathered_loss = accelerator.gather(torch.tensor(loss.item(), device=accelerator.device)).mean()
@@ -186,7 +190,7 @@ def evaluate(model, loader, accelerator, epoch, args):
             total_iou += gathered_iou.item()
             total_dice += gathered_dice.item()
             total_acc += gathered_acc.item()
-            
+        
             # Only update progress bar on main process
             if accelerator.is_main_process:
                 progress_bar.set_postfix(val_loss=gathered_loss.item(), val_iou=gathered_iou.item(), 
@@ -255,23 +259,23 @@ def main(args):
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=2)
 
     # Model and optimizer
-    model = UNet3D(in_channels=1, out_channels=1)
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
-
+    model = UNet3D(in_channels=1, out_channels=4)  # 4 classes: background + spleen + liver + kidneys
+    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    
     # Prepare for distributed training
     model, optimizer, train_loader, val_loader, test_loader = accelerator.prepare(
         model, optimizer, train_loader, val_loader, test_loader
     )
-
+    
     # Log file setup
     if accelerator.is_main_process:
         log_file = os.path.join(log_dir, 'train_log.csv')
         with open(log_file, 'w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(['epoch', 'time', 'train_loss', 'val_loss', 
-                            'train_dice', 'val_dice', 'train_iou', 'val_iou',
-                            'train_acc', 'val_acc'])
-
+                           'train_dice', 'val_dice', 'train_iou', 'val_iou',
+                           'train_acc', 'val_acc'])
+    
     # Training loop
     best_val_dice = 0
     start_time = time.time()
@@ -304,7 +308,7 @@ def main(args):
                 writer.writerow([epoch+1, epoch_time, train_loss, val_loss,
                                train_dice, val_dice, train_iou, val_iou,
                                train_acc, val_acc])
-            
+
             # Log GPU usage after each epoch
             log_gpu_usage(gpu_log_file)
 
@@ -323,7 +327,7 @@ def main(args):
                 'train_dice': train_dice,
                 'val_dice': val_dice,
             }, checkpoint_path)
-
+        
         # Save best model
         if val_dice > best_val_dice:
             best_val_dice = val_dice
@@ -357,6 +361,7 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', type=int, default=4, help='Batch size')
     parser.add_argument('--epochs', type=int, default=100, help='Number of epochs')
     parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
+    parser.add_argument('--weight_decay', type=float, default=0.01, help='Weight decay for AdamW optimizer')
     parser.add_argument('--seed', type=int, default=None, help='Random seed for reproducibility')
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1, help='Number of steps to accumulate gradients')
     parser.add_argument('--mixed_precision', type=str, default='no', choices=['no', 'fp16', 'bf16'], help='Mixed precision training')

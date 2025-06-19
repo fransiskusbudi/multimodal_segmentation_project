@@ -21,6 +21,7 @@ source /home/${USER}/miniconda3/bin/activate diss
 
 # Run the testing
 python test_model.py \
-    --model_path "experiments/best_model.pth" \
+    --model_path "experiments/exp_20250618_012521_bs1_ep100_lr0.001_wd0.01/checkpoints/best_model_exp_20250618_012521_bs1_ep100_lr0.001_wd0.01.pth" \
     --test_dir "datasets/resampled/test" \
-    --output_dir "test_results" 
+    --experiment_dir "test_results" \
+    --model_name "unet"

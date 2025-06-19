@@ -19,7 +19,7 @@ echo "Job started at ${dt}"
 # Default values
 DATA_ROOT="datasets/resampled"
 BATCH_SIZE=1  # Keep batch size per GPU the same
-EPOCHS=50
+EPOCHS=100
 LR=0.001
 EXPERIMENT_DIR="experiments"
 GRAD_ACCUM_STEPS=8  # Doubled gradient accumulation to compensate for fewer GPUs

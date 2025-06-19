@@ -12,7 +12,8 @@ multimodal_segmentation_project/
 │   ├── dataloader.py     # Data loading and preprocessing
 │   └── metrics.py        # Evaluation metrics
 ├── notebooks/
-│   ├── testing.ipynb     # Testing and visualization
+│   ├── testing.ipynb     # Testing and 
+visualization
 │   ├── viz_amos.ipynb    # AMOS dataset visualization
 │   └── spacing.ipynb     # Spacing analysis
 ├── train_unet.py         # Training script

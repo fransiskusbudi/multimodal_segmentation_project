@@ -60,7 +60,7 @@ def main():
                        help='Mixed precision training type')
     
     args = parser.parse_args()
-    
+
     if args.experiment == 'train':
         run_baseline(args)
     elif args.experiment == 'eval':

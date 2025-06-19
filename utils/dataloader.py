@@ -24,6 +24,24 @@ class CombinedDataset(Dataset):
         self.samples = []
         self.transform = transform
         self.accelerator = Accelerator()
+        
+        # AMOS dataset mapping for liver, kidneys, and spleen
+        self.amos_mapping = {
+            0: 0,  # background
+            1: 1,  # spleen
+            2: 3,  # right kidney -> kidneys class
+            3: 3,  # left kidney -> kidneys class
+            6: 2,  # liver
+        }
+        
+        # CHAOS dataset mapping
+        self.chaos_mapping = {
+            0: 0,      # background
+            63: 2,     # liver
+            126: 3,    # right kidney -> kidneys class
+            189: 3,    # left kidney -> kidneys class
+            252: 1,    # spleen
+        }
 
         # Loop through each dataset folder inside the split_dir
         dataset_names = os.listdir(split_dir)
@@ -56,18 +74,65 @@ class CombinedDataset(Dataset):
     def __len__(self):
         return len(self.samples)
 
+    def preprocess_ct(self, image):
+        """Preprocess CT image with appropriate window settings."""
+        # Typical abdominal window: -160 to 240 HU
+        window_min, window_max = -160, 240
+        image = np.clip(image, window_min, window_max)
+        image = (image - window_min) / (window_max - window_min)
+        return image
+
+    def preprocess_mri(self, image):
+        """Preprocess MRI image with z-score normalization."""
+        mean = np.mean(image)
+        std = np.std(image)
+        image = (image - mean) / (std + 1e-8)
+        image = np.clip(image, -5, 5)
+        image = (image + 5) / 10
+        return image
+
     def __getitem__(self, idx):
         sample = self.samples[idx]
         image = nib.load(sample['image_path']).get_fdata().astype(np.float32)
         label = nib.load(sample['label_path']).get_fdata().astype(np.int64)
+        dataset_name = sample['dataset_name']
 
-        # Normalize image intensities to [0, 1]
-        # image = (image - np.min(image)) / (np.max(image) - np.min(image) + 1e-8)
-        mean = np.mean(image)
-        std = np.std(image)
-        image = (image - mean) / (std + 1e-8)
-        image = np.clip(image, -5, 5)        # Limit outliers
-        image = (image + 5) / 10             # Scale to [0, 1]
+        # Modality-specific preprocessing
+        if dataset_name.lower().endswith('_ct'):
+            image = self.preprocess_ct(image)
+        elif dataset_name.lower().endswith('_mri'):
+            image = self.preprocess_mri(image)
+        else:
+            # Default/fallback: treat as MRI
+            image = self.preprocess_mri(image)
+
+        # Handle different dataset label formats
+        if dataset_name.startswith('amos'):
+            # Create multi-class label for liver, kidneys, and spleen
+            new_label = np.zeros_like(label)
+            for old_label, new_label_idx in self.amos_mapping.items():
+                new_label[label == old_label] = new_label_idx
+            label = new_label
+        elif dataset_name.startswith('chaos'):
+            # Map CHAOS labels to match AMOS format
+            new_label = np.zeros_like(label)
+            for old_val, new_val in self.chaos_mapping.items():
+                # Handle the range of values for each class
+                if old_val == 63:  # Liver
+                    mask = (label >= 55) & (label <= 70)
+                elif old_val == 126:  # Right kidney
+                    mask = (label >= 110) & (label <= 135)
+                elif old_val == 189:  # Left kidney
+                    mask = (label >= 175) & (label <= 200)
+                elif old_val == 252:  # Spleen
+                    mask = (label >= 240) & (label <= 255)
+                else:  # Background
+                    mask = (label == 0)
+                new_label[mask] = new_val
+            label = new_label
+        elif dataset_name == 'btcv':
+            # BTCV already has the correct format
+            pass
 
         # Add channel dimension (C, H, W, D)
         image = np.expand_dims(image, axis=0)
@@ -79,8 +144,7 @@ class CombinedDataset(Dataset):
 
         # Convert to PyTorch tensors
         image_tensor = torch.from_numpy(image).float()
-        label_tensor = torch.from_numpy(label).float()
-        label_tensor = (label_tensor > 0.5).float()
+        label_tensor = torch.from_numpy(label).long()  # Changed to long for multi-class
 
         return image_tensor, label_tensor
 

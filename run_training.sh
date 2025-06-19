@@ -62,3 +62,4 @@ rm -rf ${dest_path}
 
 # Print completion message
 echo "Training completed! Check $EXPERIMENT_DIR for experiment results." 
+ 
