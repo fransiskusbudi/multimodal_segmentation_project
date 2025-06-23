@@ -1,3 +1,9 @@
+#!/usr/bin/env python3
+"""
+Fine-tuning script for CT data
+Loads a pre-trained model and continues training on CT-specific data
+"""
+
 import os
 import argparse
 import torch
@@ -20,39 +26,18 @@ import subprocess
 def format_time(seconds):
     return str(timedelta(seconds=int(seconds)))
 
-def create_experiment_name(args):
-    """Create a unique experiment name based on parameters."""
+def create_finetune_experiment_name(args):
+    """Create a unique experiment name for fine-tuning."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    param_str = f"bs{args.batch_size}_ep{args.epochs}_lr{args.lr}_wd{args.weight_decay}"
-    if args.freeze_encoder_epoch is not None:
-        param_str += f"_freeze{args.freeze_encoder_epoch}"
-    return f"exp_{timestamp}_{param_str}"
+    base_model = os.path.basename(args.pretrained_model).split('.')[0]
+    freeze_str = "frozen_enc" if args.freeze_encoder else "unfrozen_enc"
+    param_str = f"ft_ct_bs{args.batch_size}_ep{args.epochs}_lr{args.lr}_wd{args.weight_decay}_{freeze_str}"
+    return f"finetune_{base_model}_{timestamp}_{param_str}"
 
-def freeze_encoder(model):
-    """Freeze the encoder layers of the UNet model."""
-    for param in model.encoder.parameters():
-        param.requires_grad = False
-    for param in model.pool.parameters():
-        param.requires_grad = False
-
-def unfreeze_encoder(model):
-    """Unfreeze the encoder layers of the UNet model."""
-    for param in model.encoder.parameters():
-        param.requires_grad = True
-    for param in model.pool.parameters():
-        param.requires_grad = True
-
-def update_optimizer_for_frozen_encoder(model, optimizer, lr):
-    """Update optimizer to only include unfrozen parameters."""
-    # Get only the parameters that require gradients
-    trainable_params = filter(lambda p: p.requires_grad, model.parameters())
-    optimizer = optim.AdamW(trainable_params, lr=lr, weight_decay=optimizer.param_groups[0]['weight_decay'])
-    return optimizer
-
-def plot_training_metrics(log_file, save_dir):
-    """Create and save plots of training metrics."""
+def plot_finetune_metrics(log_file, save_dir):
+    """Create and save plots of fine-tuning metrics."""
     # Read the CSV file
-    epochs, times, train_losses, val_losses, train_dices, val_dices, train_ious, val_ious, train_accs, val_accs, encoder_frozen = [], [], [], [], [], [], [], [], [], [], []
+    epochs, times, train_losses, val_losses, train_dices, val_dices, train_ious, val_ious, train_accs, val_accs = [], [], [], [], [], [], [], [], [], []
     
     with open(log_file, 'r') as f:
         reader = csv.DictReader(f)
@@ -67,11 +52,10 @@ def plot_training_metrics(log_file, save_dir):
             val_ious.append(float(row['val_iou']))
             train_accs.append(float(row['train_acc']))
             val_accs.append(float(row['val_acc']))
-            encoder_frozen.append(row.get('encoder_frozen', 'False').lower() == 'true')
 
     # Create a figure with subplots
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
-    fig.suptitle('Training Metrics', fontsize=16)
+    fig.suptitle('Fine-tuning Metrics (CT Data)', fontsize=16)
 
     # Plot losses
     ax1.plot(epochs, train_losses, label='Train Loss', marker='o')
@@ -109,33 +93,9 @@ def plot_training_metrics(log_file, save_dir):
     ax4.legend()
     ax4.grid(True)
 
-    # Add encoder freezing visualization to all subplots
-    if any(encoder_frozen):
-        for ax in [ax1, ax2, ax3, ax4]:
-            # Find where encoder freezing changes
-            frozen_regions = []
-            start_epoch = None
-            for i, frozen in enumerate(encoder_frozen):
-                if frozen and start_epoch is None:
-                    start_epoch = epochs[i]
-                elif not frozen and start_epoch is not None:
-                    frozen_regions.append((start_epoch, epochs[i-1]))
-                    start_epoch = None
-            if start_epoch is not None:
-                frozen_regions.append((start_epoch, epochs[-1]))
-            
-            # Shade frozen regions
-            for start, end in frozen_regions:
-                ax.axvspan(start, end, alpha=0.2, color='red', label='Encoder Frozen' if start == frozen_regions[0][0] else "")
-                ax.axvline(x=start, color='red', linestyle='--', alpha=0.7)
-                ax.axvline(x=end, color='red', linestyle='--', alpha=0.7)
-            
-            if frozen_regions:
-                ax.legend()
-
     # Adjust layout and save
     plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, 'training_metrics.png'))
+    plt.savefig(os.path.join(save_dir, 'finetune_metrics.png'))
     plt.close()
 
     # Create a separate plot for training time
@@ -143,31 +103,9 @@ def plot_training_metrics(log_file, save_dir):
     plt.plot(epochs, times, marker='o')
     plt.xlabel('Epoch')
     plt.ylabel('Time (seconds)')
-    plt.title('Training Time per Epoch')
+    plt.title('Fine-tuning Time per Epoch')
     plt.grid(True)
-    
-    # Add encoder freezing visualization
-    if any(encoder_frozen):
-        frozen_regions = []
-        start_epoch = None
-        for i, frozen in enumerate(encoder_frozen):
-            if frozen and start_epoch is None:
-                start_epoch = epochs[i]
-            elif not frozen and start_epoch is not None:
-                frozen_regions.append((start_epoch, epochs[i-1]))
-                start_epoch = None
-        if start_epoch is not None:
-            frozen_regions.append((start_epoch, epochs[-1]))
-        
-        for start, end in frozen_regions:
-            plt.axvspan(start, end, alpha=0.2, color='red', label='Encoder Frozen' if start == frozen_regions[0][0] else "")
-            plt.axvline(x=start, color='red', linestyle='--', alpha=0.7)
-            plt.axvline(x=end, color='red', linestyle='--', alpha=0.7)
-        
-        if frozen_regions:
-            plt.legend()
-    
-    plt.savefig(os.path.join(save_dir, 'training_time.png'))
+    plt.savefig(os.path.join(save_dir, 'finetune_time.png'))
     plt.close()
 
 def log_gpu_usage(log_file="gpu_usage.log"):
@@ -182,7 +120,7 @@ def train_one_epoch(model, loader, optimizer, accelerator, epoch, args):
 
     # Only show progress bar on main process
     if accelerator.is_main_process:
-        progress_bar = tqdm(loader, desc=f"🟢 Training Epoch {epoch+1}/{args.epochs}", leave=False)
+        progress_bar = tqdm(loader, desc=f"🟢 Fine-tuning Epoch {epoch+1}/{args.epochs}", leave=False)
         # Log GPU usage at start of training
         log_gpu_usage(os.path.join(args.experiment_dir, args.experiment_name, 'logs', 'gpu_usage.log'))
     else:
@@ -192,7 +130,7 @@ def train_one_epoch(model, loader, optimizer, accelerator, epoch, args):
         with accelerator.accumulate(model):
             optimizer.zero_grad()
             outputs = model(images)
-            loss = combined_loss(outputs, labels)  # Now handles multi-class
+            loss = combined_loss(outputs, labels)
             accelerator.backward(loss)
             optimizer.step()
             
@@ -243,7 +181,7 @@ def evaluate(model, loader, accelerator, epoch, args):
     with torch.no_grad():
         for i, (images, labels) in enumerate(progress_bar):
             outputs = model(images)
-            loss = combined_loss(outputs, labels)  # Now handles multi-class
+            loss = combined_loss(outputs, labels)
             
             # Calculate metrics
             iou = calculate_iou(outputs, labels)
@@ -269,11 +207,60 @@ def evaluate(model, loader, accelerator, epoch, args):
                 # Log GPU usage every 10 batches
                 if i % 10 == 0:
                     log_gpu_usage(os.path.join(args.experiment_dir, args.experiment_name, 'logs', 'gpu_usage.log'))
-    
+
     return (running_loss / num_batches,
             total_iou / num_batches,
             total_dice / num_batches,
             total_acc / num_batches)
+
+def load_pretrained_model(model_path, model, accelerator):
+    """Load pre-trained model weights."""
+    if accelerator.is_main_process:
+        print(f"Loading pre-trained model from: {model_path}")
+    
+    checkpoint = torch.load(model_path, map_location=accelerator.device)
+    
+    # Handle different checkpoint formats
+    if isinstance(checkpoint, dict):
+        if 'model_state_dict' in checkpoint:
+            state_dict = checkpoint['model_state_dict']
+        else:
+            state_dict = checkpoint
+    else:
+        state_dict = checkpoint
+    
+    # Load the state dict
+    model.load_state_dict(state_dict, strict=True)
+    
+    if accelerator.is_main_process:
+        print("✅ Pre-trained model loaded successfully!")
+    
+    return model
+
+def freeze_encoder(model, accelerator):
+    """Freeze the encoder part of the UNet3D model to prevent overfitting."""
+    if accelerator.is_main_process:
+        print("🔒 Freezing encoder layers to prevent overfitting...")
+    
+    # Freeze encoder layers
+    for param in model.encoder.parameters():
+        param.requires_grad = False
+    
+    # Freeze bottleneck
+    for param in model.bottleneck.parameters():
+        param.requires_grad = False
+    
+    # Count frozen and trainable parameters
+    frozen_params = sum(p.numel() for p in model.parameters() if not p.requires_grad)
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total_params = frozen_params + trainable_params
+    
+    if accelerator.is_main_process:
+        print(f"📊 Parameter Summary:")
+        print(f"   Frozen parameters: {frozen_params:,} ({frozen_params/total_params*100:.1f}%)")
+        print(f"   Trainable parameters: {trainable_params:,} ({trainable_params/total_params*100:.1f}%)")
+        print(f"   Total parameters: {total_params:,}")
+        print("✅ Encoder frozen successfully!")
 
 def main(args):
     # Initialize accelerator
@@ -288,13 +275,11 @@ def main(args):
     
     # Only print on main process
     if accelerator.is_main_process:
-        print(f"[START] 🚀 Starting Training\n" + "=" * 50)
-        if args.freeze_encoder_epoch is not None:
-            print(f"[INFO] 🔒 Encoder will be frozen at epoch {args.freeze_encoder_epoch}")
+        print(f"[START] 🚀 Starting CT Fine-tuning\n" + "=" * 50)
 
     # Create unique experiment directory
-    experiment_name = create_experiment_name(args)
-    args.experiment_name = experiment_name  # Store experiment name in args for GPU logging
+    experiment_name = create_finetune_experiment_name(args)
+    args.experiment_name = experiment_name
     experiment_dir = os.path.join(args.experiment_dir, experiment_name)
     checkpoint_dir = os.path.join(experiment_dir, 'checkpoints')
     log_dir = os.path.join(experiment_dir, 'logs')
@@ -310,6 +295,10 @@ def main(args):
     if accelerator.is_main_process:
         config_file = os.path.join(experiment_dir, 'config.txt')
         with open(config_file, 'w') as f:
+            f.write(f"Fine-tuning Configuration:\n")
+            f.write(f"Pre-trained model: {args.pretrained_model}\n")
+            f.write(f"CT data root: {args.data_root}\n")
+            f.write(f"Encoder frozen: {args.freeze_encoder}\n")
             for arg in vars(args):
                 f.write(f"{arg}: {getattr(args, arg)}\n")
         
@@ -317,14 +306,14 @@ def main(args):
         gpu_log_file = os.path.join(log_dir, 'gpu_usage.log')
         log_gpu_usage(gpu_log_file)
 
-    # Datasets and loaders
+    # Datasets and loaders - focus on CT data
     train_dir = os.path.join(args.data_root, 'train')
     val_dir = os.path.join(args.data_root, 'val')
     test_dir = os.path.join(args.data_root, 'test')
 
-    train_dataset = CombinedDataset(train_dir, transform=combined_transform)
-    val_dataset = CombinedDataset(val_dir)
-    test_dataset = CombinedDataset(test_dir)
+    train_dataset = CombinedDataset(train_dir, transform=combined_transform, modalities=args.modalities)
+    val_dataset = CombinedDataset(val_dir, modalities=args.modalities)
+    test_dataset = CombinedDataset(test_dir, modalities=args.modalities)
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2)
     val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=2)
@@ -332,50 +321,38 @@ def main(args):
 
     # Model and optimizer
     model = UNet3D(in_channels=1, out_channels=4)  # 4 classes: background + spleen + liver + kidneys
-    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    
+    # Load pre-trained model
+    model = load_pretrained_model(args.pretrained_model, model, accelerator)
+    
+    # Freeze encoder if requested
+    if args.freeze_encoder:
+        freeze_encoder(model, accelerator)
+    
+    # Optimizer - only optimize trainable parameters
+    trainable_params = filter(lambda p: p.requires_grad, model.parameters())
+    optimizer = optim.AdamW(trainable_params, lr=args.lr, weight_decay=args.weight_decay)
     
     # Prepare for distributed training
     model, optimizer, train_loader, val_loader, test_loader = accelerator.prepare(
         model, optimizer, train_loader, val_loader, test_loader
     )
-
+    
     # Log file setup
     if accelerator.is_main_process:
-        log_file = os.path.join(log_dir, 'train_log.csv')
+        log_file = os.path.join(log_dir, 'finetune_log.csv')
         with open(log_file, 'w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(['epoch', 'time', 'train_loss', 'val_loss', 
                            'train_dice', 'val_dice', 'train_iou', 'val_iou',
-                           'train_acc', 'val_acc', 'encoder_frozen'])
-
-    # Training loop
+                           'train_acc', 'val_acc'])
+    
+    # Fine-tuning loop
     best_val_dice = 0
     start_time = time.time()
-    encoder_frozen = False
     
     for epoch in range(args.epochs):
         epoch_start_time = time.time()
-        
-        # Check if we need to freeze/unfreeze encoder
-        if args.freeze_encoder_epoch is not None:
-            if epoch == args.freeze_encoder_epoch and not encoder_frozen:
-                # Freeze encoder at specified epoch
-                if accelerator.is_main_process:
-                    print(f"[INFO] 🔒 Freezing encoder at epoch {epoch+1}")
-                freeze_encoder(model)
-                optimizer = update_optimizer_for_frozen_encoder(model, optimizer, args.lr)
-                # Re-prepare optimizer with accelerator
-                optimizer = accelerator.prepare(optimizer)
-                encoder_frozen = True
-            elif epoch == args.freeze_encoder_epoch + 1 and encoder_frozen:
-                # Unfreeze encoder after one epoch
-                if accelerator.is_main_process:
-                    print(f"[INFO] 🔓 Unfreezing encoder at epoch {epoch+1}")
-                unfreeze_encoder(model)
-                optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-                # Re-prepare optimizer with accelerator
-                optimizer = accelerator.prepare(optimizer)
-                encoder_frozen = False
         
         # Training
         train_loss, train_iou, train_dice, train_acc = train_one_epoch(
@@ -390,19 +367,18 @@ def main(args):
         
         # Log metrics only on main process
         if accelerator.is_main_process:
-            print(f"[EPOCH] 📊 Epoch {epoch+1}/{args.epochs} - Time: {format_time(epoch_time)} | "
+            print(f"[EPOCH] 📊 Fine-tuning Epoch {epoch+1}/{args.epochs} - Time: {format_time(epoch_time)} | "
                   f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | "
                   f"Train IoU: {train_iou:.4f} | Val IoU: {val_iou:.4f} | "
                   f"Train Dice: {train_dice:.4f} | Val Dice: {val_dice:.4f} | "
-                  f"Train Acc: {train_acc:.4f} | Val Acc: {val_acc:.4f} | "
-                  f"Encoder: {'🔒' if encoder_frozen else '🔓'}")
+                  f"Train Acc: {train_acc:.4f} | Val Acc: {val_acc:.4f}")
             
             # Save to CSV
             with open(log_file, 'a', newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow([epoch+1, epoch_time, train_loss, val_loss,
                                train_dice, val_dice, train_iou, val_iou,
-                               train_acc, val_acc, encoder_frozen])
+                               train_acc, val_acc])
 
             # Log GPU usage after each epoch
             log_gpu_usage(gpu_log_file)
@@ -411,7 +387,7 @@ def main(args):
         if (epoch + 1) % 25 == 0:
             accelerator.wait_for_everyone()
             unwrapped_model = accelerator.unwrap_model(model)
-            checkpoint_name = f"checkpoint_epoch{epoch+1}_{experiment_name}.pth"
+            checkpoint_name = f"finetune_checkpoint_epoch{epoch+1}_{experiment_name}.pth"
             checkpoint_path = os.path.join(checkpoint_dir, checkpoint_name)
             accelerator.save({
                 'epoch': epoch + 1,
@@ -421,7 +397,7 @@ def main(args):
                 'val_loss': val_loss,
                 'train_dice': train_dice,
                 'val_dice': val_dice,
-                'encoder_frozen': encoder_frozen,
+                'encoder_frozen': args.freeze_encoder,
             }, checkpoint_path)
         
         # Save best model
@@ -429,7 +405,7 @@ def main(args):
             best_val_dice = val_dice
             accelerator.wait_for_everyone()
             unwrapped_model = accelerator.unwrap_model(model)
-            best_model_path = os.path.join(checkpoint_dir, f"best_model_{experiment_name}.pth")
+            best_model_path = os.path.join(checkpoint_dir, f"best_finetuned_model_{experiment_name}.pth")
             accelerator.save({
                 'epoch': epoch + 1,
                 'model_state_dict': unwrapped_model.state_dict(),
@@ -438,32 +414,40 @@ def main(args):
                 'val_loss': val_loss,
                 'train_dice': train_dice,
                 'val_dice': val_dice,
-                'encoder_frozen': encoder_frozen,
+                'encoder_frozen': args.freeze_encoder,
             }, best_model_path)
 
-    # Plot training metrics only on main process
+    # Plot fine-tuning metrics only on main process
     if accelerator.is_main_process:
-        plot_training_metrics(log_file, plots_dir)
+        plot_finetune_metrics(log_file, plots_dir)
         total_time = time.time() - start_time
-        print(f"\n[END] ✅ Training completed in {format_time(total_time)}")
+        print(f"\n[END] ✅ CT Fine-tuning completed in {format_time(total_time)}")
         print(f"Best validation Dice score: {best_val_dice:.4f}")
         
         # Log final GPU usage
         log_gpu_usage(gpu_log_file)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Train UNet3D model')
+    parser = argparse.ArgumentParser(description='Fine-tune UNet3D model on CT data')
+    parser.add_argument('--pretrained_model', type=str, required=True, help='Path to pre-trained model checkpoint')
     parser.add_argument('--data_root', type=str, required=True, help='Root directory of the dataset')
     parser.add_argument('--experiment_dir', type=str, default='experiments', help='Directory to save experiments')
-    parser.add_argument('--batch_size', type=int, default=4, help='Batch size')
-    parser.add_argument('--epochs', type=int, default=100, help='Number of epochs')
-    parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
+    parser.add_argument('--batch_size', type=int, default=2, help='Batch size for fine-tuning')
+    parser.add_argument('--epochs', type=int, default=50, help='Number of epochs for fine-tuning')
+    parser.add_argument('--lr', type=float, default=0.0001, help='Learning rate for fine-tuning')
     parser.add_argument('--weight_decay', type=float, default=0.01, help='Weight decay for AdamW optimizer')
     parser.add_argument('--seed', type=int, default=None, help='Random seed for reproducibility')
+    parser.add_argument('--modalities', type=str, default='ct', help='Comma-separated list of modalities to include')
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1, help='Number of steps to accumulate gradients')
     parser.add_argument('--mixed_precision', type=str, default='no', choices=['no', 'fp16', 'bf16'], help='Mixed precision training')
-    parser.add_argument('--modalities', type=str, default='all', help='Comma-separated list of modalities to include')
-    parser.add_argument('--freeze_encoder_epoch', type=int, default=None, help='Epoch to freeze the encoder')
+    parser.add_argument('--freeze_encoder', action='store_true', help='Freeze encoder layers to prevent overfitting to CT data')
     
     args = parser.parse_args()
+    
+    # Process modalities argument
+    if args.modalities.lower() == 'all':
+        args.modalities = None  # None means include all modalities
+    else:
+        args.modalities = [mod.strip().lower() for mod in args.modalities.split(',')]
+    
     main(args) 
