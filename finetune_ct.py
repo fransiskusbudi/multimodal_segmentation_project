@@ -1,3 +1,9 @@
+#!/usr/bin/env python3
+"""
+Fine-tuning script for CT data
+Loads a pre-trained model and continues training on CT-specific data
+"""
+
 import os
 import argparse
 import torch
@@ -20,14 +26,15 @@ import subprocess
 def format_time(seconds):
     return str(timedelta(seconds=int(seconds)))
 
-def create_experiment_name(args):
-    """Create a unique experiment name based on parameters."""
+def create_finetune_experiment_name(args):
+    """Create a unique experiment name for fine-tuning."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    param_str = f"bs{args.batch_size}_ep{args.epochs}_lr{args.lr}_wd{args.weight_decay}"
-    return f"exp_{timestamp}_{param_str}"
+    base_model = os.path.basename(args.pretrained_model).split('.')[0]
+    param_str = f"ft_ct_bs{args.batch_size}_ep{args.epochs}_lr{args.lr}_wd{args.weight_decay}"
+    return f"finetune_{base_model}_{timestamp}_{param_str}"
 
-def plot_training_metrics(log_file, save_dir):
-    """Create and save plots of training metrics."""
+def plot_finetune_metrics(log_file, save_dir):
+    """Create and save plots of fine-tuning metrics."""
     # Read the CSV file
     epochs, times, train_losses, val_losses, train_dices, val_dices, train_ious, val_ious, train_accs, val_accs = [], [], [], [], [], [], [], [], [], []
     
@@ -47,7 +54,7 @@ def plot_training_metrics(log_file, save_dir):
 
     # Create a figure with subplots
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
-    fig.suptitle('Training Metrics', fontsize=16)
+    fig.suptitle('Fine-tuning Metrics (CT Data)', fontsize=16)
 
     # Plot losses
     ax1.plot(epochs, train_losses, label='Train Loss', marker='o')
@@ -87,7 +94,7 @@ def plot_training_metrics(log_file, save_dir):
 
     # Adjust layout and save
     plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, 'training_metrics.png'))
+    plt.savefig(os.path.join(save_dir, 'finetune_metrics.png'))
     plt.close()
 
     # Create a separate plot for training time
@@ -95,9 +102,9 @@ def plot_training_metrics(log_file, save_dir):
     plt.plot(epochs, times, marker='o')
     plt.xlabel('Epoch')
     plt.ylabel('Time (seconds)')
-    plt.title('Training Time per Epoch')
+    plt.title('Fine-tuning Time per Epoch')
     plt.grid(True)
-    plt.savefig(os.path.join(save_dir, 'training_time.png'))
+    plt.savefig(os.path.join(save_dir, 'finetune_time.png'))
     plt.close()
 
 def log_gpu_usage(log_file="gpu_usage.log"):
@@ -112,7 +119,7 @@ def train_one_epoch(model, loader, optimizer, accelerator, epoch, args):
 
     # Only show progress bar on main process
     if accelerator.is_main_process:
-        progress_bar = tqdm(loader, desc=f"🟢 Training Epoch {epoch+1}/{args.epochs}", leave=False)
+        progress_bar = tqdm(loader, desc=f"🟢 Fine-tuning Epoch {epoch+1}/{args.epochs}", leave=False)
         # Log GPU usage at start of training
         log_gpu_usage(os.path.join(args.experiment_dir, args.experiment_name, 'logs', 'gpu_usage.log'))
     else:
@@ -122,7 +129,7 @@ def train_one_epoch(model, loader, optimizer, accelerator, epoch, args):
         with accelerator.accumulate(model):
             optimizer.zero_grad()
             outputs = model(images)
-            loss = combined_loss(outputs, labels)  # Now handles multi-class
+            loss = combined_loss(outputs, labels)
             accelerator.backward(loss)
             optimizer.step()
             
@@ -173,7 +180,7 @@ def evaluate(model, loader, accelerator, epoch, args):
     with torch.no_grad():
         for i, (images, labels) in enumerate(progress_bar):
             outputs = model(images)
-            loss = combined_loss(outputs, labels)  # Now handles multi-class
+            loss = combined_loss(outputs, labels)
             
             # Calculate metrics
             iou = calculate_iou(outputs, labels)
@@ -199,11 +206,35 @@ def evaluate(model, loader, accelerator, epoch, args):
                 # Log GPU usage every 10 batches
                 if i % 10 == 0:
                     log_gpu_usage(os.path.join(args.experiment_dir, args.experiment_name, 'logs', 'gpu_usage.log'))
-    
+
     return (running_loss / num_batches,
             total_iou / num_batches,
             total_dice / num_batches,
             total_acc / num_batches)
+
+def load_pretrained_model(model_path, model, accelerator):
+    """Load pre-trained model weights."""
+    if accelerator.is_main_process:
+        print(f"Loading pre-trained model from: {model_path}")
+    
+    checkpoint = torch.load(model_path, map_location=accelerator.device)
+    
+    # Handle different checkpoint formats
+    if isinstance(checkpoint, dict):
+        if 'model_state_dict' in checkpoint:
+            state_dict = checkpoint['model_state_dict']
+        else:
+            state_dict = checkpoint
+    else:
+        state_dict = checkpoint
+    
+    # Load the state dict
+    model.load_state_dict(state_dict, strict=True)
+    
+    if accelerator.is_main_process:
+        print("✅ Pre-trained model loaded successfully!")
+    
+    return model
 
 def main(args):
     # Initialize accelerator
@@ -212,23 +243,17 @@ def main(args):
         mixed_precision=args.mixed_precision
     )
     
-    # Process modalities argument
-    if args.modalities.lower() == 'all':
-        args.modalities = None  # None means include all modalities
-    else:
-        args.modalities = [mod.strip().lower() for mod in args.modalities.split(',')]
-    
     # Set seed for reproducibility
     if args.seed is not None:
         set_seed(args.seed)
     
     # Only print on main process
     if accelerator.is_main_process:
-        print(f"[START] 🚀 Starting Training\n" + "=" * 50)
+        print(f"[START] 🚀 Starting CT Fine-tuning\n" + "=" * 50)
 
     # Create unique experiment directory
-    experiment_name = create_experiment_name(args)
-    args.experiment_name = experiment_name  # Store experiment name in args for GPU logging
+    experiment_name = create_finetune_experiment_name(args)
+    args.experiment_name = experiment_name
     experiment_dir = os.path.join(args.experiment_dir, experiment_name)
     checkpoint_dir = os.path.join(experiment_dir, 'checkpoints')
     log_dir = os.path.join(experiment_dir, 'logs')
@@ -244,6 +269,9 @@ def main(args):
     if accelerator.is_main_process:
         config_file = os.path.join(experiment_dir, 'config.txt')
         with open(config_file, 'w') as f:
+            f.write(f"Fine-tuning Configuration:\n")
+            f.write(f"Pre-trained model: {args.pretrained_model}\n")
+            f.write(f"CT data root: {args.data_root}\n")
             for arg in vars(args):
                 f.write(f"{arg}: {getattr(args, arg)}\n")
         
@@ -251,7 +279,7 @@ def main(args):
         gpu_log_file = os.path.join(log_dir, 'gpu_usage.log')
         log_gpu_usage(gpu_log_file)
 
-    # Datasets and loaders
+    # Datasets and loaders - focus on CT data
     train_dir = os.path.join(args.data_root, 'train')
     val_dir = os.path.join(args.data_root, 'val')
     test_dir = os.path.join(args.data_root, 'test')
@@ -266,6 +294,11 @@ def main(args):
 
     # Model and optimizer
     model = UNet3D(in_channels=1, out_channels=4)  # 4 classes: background + spleen + liver + kidneys
+    
+    # Load pre-trained model
+    model = load_pretrained_model(args.pretrained_model, model, accelerator)
+    
+    # Optimizer - typically use lower learning rate for fine-tuning
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     
     # Prepare for distributed training
@@ -275,14 +308,14 @@ def main(args):
     
     # Log file setup
     if accelerator.is_main_process:
-        log_file = os.path.join(log_dir, 'train_log.csv')
+        log_file = os.path.join(log_dir, 'finetune_log.csv')
         with open(log_file, 'w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(['epoch', 'time', 'train_loss', 'val_loss', 
                            'train_dice', 'val_dice', 'train_iou', 'val_iou',
                            'train_acc', 'val_acc'])
     
-    # Training loop
+    # Fine-tuning loop
     best_val_dice = 0
     start_time = time.time()
     
@@ -302,7 +335,7 @@ def main(args):
         
         # Log metrics only on main process
         if accelerator.is_main_process:
-            print(f"[EPOCH] 📊 Epoch {epoch+1}/{args.epochs} - Time: {format_time(epoch_time)} | "
+            print(f"[EPOCH] 📊 Fine-tuning Epoch {epoch+1}/{args.epochs} - Time: {format_time(epoch_time)} | "
                   f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | "
                   f"Train IoU: {train_iou:.4f} | Val IoU: {val_iou:.4f} | "
                   f"Train Dice: {train_dice:.4f} | Val Dice: {val_dice:.4f} | "
@@ -322,7 +355,7 @@ def main(args):
         if (epoch + 1) % 25 == 0:
             accelerator.wait_for_everyone()
             unwrapped_model = accelerator.unwrap_model(model)
-            checkpoint_name = f"checkpoint_epoch{epoch+1}_{experiment_name}.pth"
+            checkpoint_name = f"finetune_checkpoint_epoch{epoch+1}_{experiment_name}.pth"
             checkpoint_path = os.path.join(checkpoint_dir, checkpoint_name)
             accelerator.save({
                 'epoch': epoch + 1,
@@ -339,7 +372,7 @@ def main(args):
             best_val_dice = val_dice
             accelerator.wait_for_everyone()
             unwrapped_model = accelerator.unwrap_model(model)
-            best_model_path = os.path.join(checkpoint_dir, f"best_model_{experiment_name}.pth")
+            best_model_path = os.path.join(checkpoint_dir, f"best_finetuned_model_{experiment_name}.pth")
             accelerator.save({
                 'epoch': epoch + 1,
                 'model_state_dict': unwrapped_model.state_dict(),
@@ -350,28 +383,36 @@ def main(args):
                 'val_dice': val_dice,
             }, best_model_path)
 
-    # Plot training metrics only on main process
+    # Plot fine-tuning metrics only on main process
     if accelerator.is_main_process:
-        plot_training_metrics(log_file, plots_dir)
+        plot_finetune_metrics(log_file, plots_dir)
         total_time = time.time() - start_time
-        print(f"\n[END] ✅ Training completed in {format_time(total_time)}")
+        print(f"\n[END] ✅ CT Fine-tuning completed in {format_time(total_time)}")
         print(f"Best validation Dice score: {best_val_dice:.4f}")
         
         # Log final GPU usage
         log_gpu_usage(gpu_log_file)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Train UNet3D model')
+    parser = argparse.ArgumentParser(description='Fine-tune UNet3D model on CT data')
+    parser.add_argument('--pretrained_model', type=str, required=True, help='Path to pre-trained model checkpoint')
     parser.add_argument('--data_root', type=str, required=True, help='Root directory of the dataset')
     parser.add_argument('--experiment_dir', type=str, default='experiments', help='Directory to save experiments')
-    parser.add_argument('--batch_size', type=int, default=4, help='Batch size')
-    parser.add_argument('--epochs', type=int, default=100, help='Number of epochs')
-    parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
+    parser.add_argument('--batch_size', type=int, default=2, help='Batch size for fine-tuning')
+    parser.add_argument('--epochs', type=int, default=50, help='Number of epochs for fine-tuning')
+    parser.add_argument('--lr', type=float, default=0.0001, help='Learning rate for fine-tuning')
     parser.add_argument('--weight_decay', type=float, default=0.01, help='Weight decay for AdamW optimizer')
     parser.add_argument('--seed', type=int, default=None, help='Random seed for reproducibility')
+    parser.add_argument('--modalities', type=str, default='ct', help='Comma-separated list of modalities to include')
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1, help='Number of steps to accumulate gradients')
     parser.add_argument('--mixed_precision', type=str, default='no', choices=['no', 'fp16', 'bf16'], help='Mixed precision training')
-    parser.add_argument('--modalities', type=str, default='all', help='Comma-separated list of modalities to include')
     
     args = parser.parse_args()
+    
+    # Process modalities argument
+    if args.modalities.lower() == 'all':
+        args.modalities = None  # None means include all modalities
+    else:
+        args.modalities = [mod.strip().lower() for mod in args.modalities.split(',')]
+    
     main(args) 
