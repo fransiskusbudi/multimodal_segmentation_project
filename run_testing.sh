@@ -16,12 +16,29 @@ echo "I am job ${SLURM_JOB_ID}"
 echo "I'm running on ${SLURM_JOB_NODELIST}"
 echo "Job started at ${dt}"
 
+# Default values
+MODEL_PATH="experiments/finetune_best_model_exp_20250618_012521_bs1_ep100_lr0_20250622_185552_ft_ct_bs1_ep50_lr1e-05_wd0.05/checkpoints/best_finetuned_model_finetune_best_model_exp_20250618_012521_bs1_ep100_lr0_20250622_185552_ft_ct_bs1_ep50_lr1e-05_wd0.05.pth"
+DATA_ROOT="datasets/resampled"
+EXPERIMENT_DIR="test_results"
+MODEL_NAME="unet"
+MODALITIES="mri"  # Options: "all", "ct", "mri", "ct,mri"
+
 # Activate Anaconda environment
 source /home/${USER}/miniconda3/bin/activate diss
 
-# Run the testing
-python test_model.py \
-    --model_path "experiments/exp_20250618_012521_bs1_ep100_lr0.001_wd0.01/checkpoints/best_model_exp_20250618_012521_bs1_ep100_lr0.001_wd0.01.pth" \
-    --test_dir "datasets/resampled/test" \
-    --experiment_dir "test_results" \
-    --model_name "unet"
+# Run the evaluation with main.py orchestrator
+echo "Starting evaluation with main.py orchestrator..."
+echo "Model path: $MODEL_PATH"
+echo "Data root: $DATA_ROOT"
+echo "Modalities: $MODALITIES"
+echo "Model name: $MODEL_NAME"
+
+python main.py \
+    --experiment eval \
+    --model_path $MODEL_PATH \
+    --data_root $DATA_ROOT \
+    --experiment_dir $EXPERIMENT_DIR \
+    --model_name $MODEL_NAME \
+    --modalities $MODALITIES
+
+echo "Evaluation completed!"

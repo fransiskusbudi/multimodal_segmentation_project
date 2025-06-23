@@ -22,6 +22,7 @@ BATCH_SIZE=2
 EPOCHS=50
 LR=0.001
 EXPERIMENT_DIR="experiments"
+MODALITIES="all"  # Options: "all", "ct", "mri", "ct,mri"
 
 # Create experiment directory if it doesn't exist
 mkdir -p $EXPERIMENT_DIR
@@ -49,13 +50,13 @@ src_path=/home/${USER}/multimodal_segmentation_project/
 rsync -azvP ${src_path} ${dest_path}
 
 # Run the training
-python main.py \
-    --experiment train \
+python train_unet.py \
     --data_root $DATA_ROOT \
     --batch_size $BATCH_SIZE \
     --epochs $EPOCHS \
     --lr $LR \
-    --experiment_dir $EXPERIMENT_DIR
+    --experiment_dir $EXPERIMENT_DIR \
+    --modalities $MODALITIES
 
 echo "Deleting scratch disk path: ${dest_path}"
 rm -rf ${dest_path}

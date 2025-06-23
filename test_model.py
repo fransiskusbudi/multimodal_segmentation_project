@@ -246,66 +246,88 @@ def test_model(model, test_loader, accelerator, args):
     
     # Initialize metrics
     metrics = {
-        'dice': [],
-        'iou': [],
-        'precision': [],
-        'recall': [],
-        'specificity': []
+        'dice_spleen': [],
+        'dice_liver': [],
+        'dice_kidneys': [],
+        'iou_spleen': [],
+        'iou_liver': [],
+        'iou_kidneys': []
     }
     per_sample_metrics = []  # For CSV
     
     with torch.no_grad():
         for i, (image, label) in enumerate(tqdm(test_loader, desc="Testing")):
-            outputs = model(image)
-            pred = outputs.argmax(dim=1)
-            
-            pred_np = pred.cpu().numpy()
-            label_np = label.cpu().numpy()
-            image_np = image.cpu().numpy()
-            
-            # Get the original NIfTI file for affine and header
-            original_nifti_path = test_loader.dataset.samples[i]['image_path']
-            original_filename = os.path.splitext(os.path.basename(original_nifti_path))[0]
-            
-            # Save visualization with all three views
-            vis_path = os.path.join(visualizations_dir, f'{original_filename}_pred.png')
-            visualize_prediction(image_np[0, 0], label_np[0], pred_np[0], vis_path)
-            
-            # Save as NIfTI in predictions folder
-            original_nifti = nib.load(original_nifti_path)
-            pred_nifti = nib.Nifti1Image(pred_np[0], affine=original_nifti.affine, header=original_nifti.header)
-            pred_nifti_path = os.path.join(predictions_dir, f'{original_filename}_pred.nii.gz')
-            nib.save(pred_nifti, pred_nifti_path)
-            
-            # Calculate metrics for each class (1,2,3)
-            for c in range(1, 4):
-                dice = calculate_dice(pred_np[0], label_np[0], c)
-                iou = calculate_iou(pred_np[0], label_np[0], c)
-                prec, rec, spec = calculate_metrics(pred_np[0], label_np[0], c)
+            try:
+                print(f"\nProcessing sample {i+1}/{len(test_loader)}")
                 
-                metrics['dice'].append(dice)
-                metrics['iou'].append(iou)
-                metrics['precision'].append(prec)
-                metrics['recall'].append(rec)
-                metrics['specificity'].append(spec)
+                outputs = model(image)
+                pred = outputs.argmax(dim=1)
+                
+                pred_np = pred.cpu().numpy()
+                label_np = label.cpu().numpy()
+                image_np = image.cpu().numpy()
+                
+                # Get the original NIfTI file for affine and header
+                original_nifti_path = test_loader.dataset.samples[i]['image_path']
+                original_filename = os.path.splitext(os.path.basename(original_nifti_path))[0]
+                print(f"Processing file: {original_filename}")
+                
+                # Save visualization with all three views
+                vis_path = os.path.join(visualizations_dir, f'{original_filename}_pred.png')
+                visualize_prediction(image_np[0, 0], label_np[0], pred_np[0], vis_path)
+                
+                # Save as NIfTI in predictions folder
+                original_nifti = nib.load(original_nifti_path)
+                pred_nifti = nib.Nifti1Image(pred_np[0], affine=original_nifti.affine, header=original_nifti.header)
+                pred_nifti_path = os.path.join(predictions_dir, f'{original_filename}_pred.nii.gz')
+                nib.save(pred_nifti, pred_nifti_path)
+                
+                # Calculate metrics for each class (1=spleen, 2=liver, 3=kidneys)
+                dice_spleen = calculate_dice(pred_np[0], label_np[0], 1)
+                dice_liver = calculate_dice(pred_np[0], label_np[0], 2)
+                dice_kidneys = calculate_dice(pred_np[0], label_np[0], 3)
+                
+                iou_spleen = calculate_iou(pred_np[0], label_np[0], 1)
+                iou_liver = calculate_iou(pred_np[0], label_np[0], 2)
+                iou_kidneys = calculate_iou(pred_np[0], label_np[0], 3)
+                
+                print(f"Metrics - Spleen: Dice={dice_spleen:.4f}, IoU={iou_spleen:.4f}")
+                print(f"Metrics - Liver: Dice={dice_liver:.4f}, IoU={iou_liver:.4f}")
+                print(f"Metrics - Kidneys: Dice={dice_kidneys:.4f}, IoU={iou_kidneys:.4f}")
+                
+                metrics['dice_spleen'].append(dice_spleen)
+                metrics['dice_liver'].append(dice_liver)
+                metrics['dice_kidneys'].append(dice_kidneys)
+                metrics['iou_spleen'].append(iou_spleen)
+                metrics['iou_liver'].append(iou_liver)
+                metrics['iou_kidneys'].append(iou_kidneys)
                 
                 per_sample_metrics.append({
                     'filename': original_filename,
-                    'class': c,
-                    'dice': dice,
-                    'iou': iou,
-                    'precision': prec,
-                    'recall': rec,
-                    'specificity': spec
+                    'dice_spleen': dice_spleen,
+                    'dice_liver': dice_liver,
+                    'dice_kidneys': dice_kidneys,
+                    'iou_spleen': iou_spleen,
+                    'iou_liver': iou_liver,
+                    'iou_kidneys': iou_kidneys
                 })
-            
-            all_predictions.append(pred_np)
-            all_labels.append(label_np)
+                
+                all_predictions.append(pred_np)
+                all_labels.append(label_np)
+                
+                print(f"Successfully processed sample {i+1}")
+                
+            except Exception as e:
+                print(f"Error processing sample {i+1}: {e}")
+                import traceback
+                traceback.print_exc()
+                continue
     
     # Save per-sample metrics to CSV
     csv_path = os.path.join(metrics_dir, 'per_sample_metrics.csv')
     with open(csv_path, 'w', newline='') as csvfile:
-        fieldnames = ['filename', 'class', 'dice', 'iou', 'precision', 'recall', 'specificity']
+        fieldnames = ['filename', 'dice_spleen', 'dice_liver', 'dice_kidneys', 
+                     'iou_spleen', 'iou_liver', 'iou_kidneys']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
         for row in per_sample_metrics:
@@ -313,11 +335,19 @@ def test_model(model, test_loader, accelerator, args):
     
     # Calculate and save overall metrics
     overall_metrics = {
-        'mean_dice': np.mean(metrics['dice']),
-        'mean_iou': np.mean(metrics['iou']),
-        'mean_precision': np.mean(metrics['precision']),
-        'mean_recall': np.mean(metrics['recall']),
-        'mean_specificity': np.mean(metrics['specificity'])
+        'mean_dice_spleen': np.mean(metrics['dice_spleen']),
+        'mean_dice_liver': np.mean(metrics['dice_liver']),
+        'mean_dice_kidneys': np.mean(metrics['dice_kidneys']),
+        'mean_iou_spleen': np.mean(metrics['iou_spleen']),
+        'mean_iou_liver': np.mean(metrics['iou_liver']),
+        'mean_iou_kidneys': np.mean(metrics['iou_kidneys']),
+        # Overall means across all classes
+        'mean_dice_overall': np.mean([np.mean(metrics['dice_spleen']), 
+                                     np.mean(metrics['dice_liver']), 
+                                     np.mean(metrics['dice_kidneys'])]),
+        'mean_iou_overall': np.mean([np.mean(metrics['iou_spleen']), 
+                                    np.mean(metrics['iou_liver']), 
+                                    np.mean(metrics['iou_kidneys'])])
     }
     
     with open(os.path.join(metrics_dir, 'metrics.json'), 'w') as f:
@@ -325,8 +355,10 @@ def test_model(model, test_loader, accelerator, args):
     
     print(f"\nTest Results saved in: {results_dir}")
     print("\nOverall Metrics:")
-    for metric, value in overall_metrics.items():
-        print(f"{metric}: {value:.4f}")
+    print(f"Spleen - Dice: {overall_metrics['mean_dice_spleen']:.4f}, IoU: {overall_metrics['mean_iou_spleen']:.4f}")
+    print(f"Liver - Dice: {overall_metrics['mean_dice_liver']:.4f}, IoU: {overall_metrics['mean_iou_liver']:.4f}")
+    print(f"Kidneys - Dice: {overall_metrics['mean_dice_kidneys']:.4f}, IoU: {overall_metrics['mean_iou_kidneys']:.4f}")
+    print(f"\nOverall Mean - Dice: {overall_metrics['mean_dice_overall']:.4f}, IoU: {overall_metrics['mean_iou_overall']:.4f}")
 
 def main(args):
     # Initialize accelerator
@@ -339,7 +371,8 @@ def main(args):
     model = model.to(accelerator.device)
     
     # Prepare test dataset
-    test_dataset = CombinedDataset(args.test_dir, transform=None)
+    test_dir = os.path.join(args.data_root, 'test')
+    test_dataset = CombinedDataset(test_dir, transform=None, modalities=args.modalities)
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=2)
     
     # Prepare model and data loader with accelerator
@@ -353,9 +386,19 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description='Test UNet3D model')
     parser.add_argument('--model_path', type=str, required=True, help='Path to the trained model checkpoint')
-    parser.add_argument('--test_dir', type=str, required=True, help='Directory containing test data')
+    parser.add_argument('--data_root', type=str, required=True, help='Root directory of the dataset')
     parser.add_argument('--experiment_dir', type=str, required=True, help='Base directory for saving test results')
     parser.add_argument('--model_name', type=str, required=True, help='Name of the model for result folder')
+    parser.add_argument('--output_dir', type=str, default='test_results', help='Directory to save test results')
+    parser.add_argument('--batch_size', type=int, default=1, help='Batch size for testing')
+    parser.add_argument('--modalities', type=str, default='all', help='Comma-separated list of modalities to include')
     
     args = parser.parse_args()
+    
+    # Process modalities argument
+    if args.modalities.lower() == 'all':
+        args.modalities = None  # None means include all modalities
+    else:
+        args.modalities = [mod.strip().lower() for mod in args.modalities.split(',')]
+    
     main(args) 

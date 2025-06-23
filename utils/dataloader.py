@@ -11,19 +11,28 @@ from accelerate import Accelerator
 
 class CombinedDataset(Dataset):
     """
-    A combined dataset loader that aggregates all images and labels 
+    A combined dataset loader that aggregates images and labels 
     from datasets stored in train/val/test directories.
+    Supports modality-specific loading (CT only, MRI only, or both).
     """
 
-    def __init__(self, split_dir, transform=None):
+    def __init__(self, split_dir, transform=None, modalities=None):
         """
         split_dir: path to the split directory, e.g.,
             '/Users/fransiskusbudi/UoE/Dissertation/multimodal_segmentation_project/datasets/resampled/train'
         transform: optional augmentation function
+        modalities: list of modalities to include, e.g., ['ct', 'mri'] or ['ct'] or ['mri']
+                   if None, includes all modalities
         """
         self.samples = []
         self.transform = transform
         self.accelerator = Accelerator()
+        
+        # Convert modalities to lowercase for case-insensitive matching
+        if modalities is not None:
+            self.modalities = [mod.lower() for mod in modalities]
+        else:
+            self.modalities = None  # Include all modalities
         
         # AMOS dataset mapping for liver, kidneys, and spleen
         self.amos_mapping = {
@@ -46,6 +55,14 @@ class CombinedDataset(Dataset):
         # Loop through each dataset folder inside the split_dir
         dataset_names = os.listdir(split_dir)
         for dataset_name in dataset_names:
+            # Check if this dataset matches the requested modalities
+            if self.modalities is not None:
+                dataset_modality = self._get_modality_from_dataset_name(dataset_name)
+                if dataset_modality not in self.modalities:
+                    if self.accelerator.is_main_process:
+                        print(f"Skipping dataset {dataset_name}: modality '{dataset_modality}' not in requested modalities {self.modalities}")
+                    continue
+            
             images_dir = os.path.join(split_dir, dataset_name, 'images')
             labels_dir = os.path.join(split_dir, dataset_name, 'labels')
 
@@ -69,10 +86,22 @@ class CombinedDataset(Dataset):
                 })
 
         if self.accelerator.is_main_process:
-            print(f"Loaded {len(self.samples)} samples from {split_dir}")
+            modality_str = f"modalities {self.modalities}" if self.modalities else "all modalities"
+            print(f"Loaded {len(self.samples)} samples from {split_dir} ({modality_str})")
 
-    def __len__(self):
-        return len(self.samples)
+    def _get_modality_from_dataset_name(self, dataset_name):
+        """
+        Extract modality from dataset name.
+        Returns 'ct' or 'mri' based on the dataset name.
+        """
+        dataset_name_lower = dataset_name.lower()
+        if dataset_name_lower.endswith('_ct'):
+            return 'ct'
+        elif dataset_name_lower.endswith('_mri'):
+            return 'mri'
+        else:
+            # Default to MRI for unknown datasets
+            return 'mri'
 
     def preprocess_ct(self, image):
         """Preprocess CT image with appropriate window settings."""
@@ -148,6 +177,10 @@ class CombinedDataset(Dataset):
 
         return image_tensor, label_tensor
 
+    def __len__(self):
+        """Return the number of samples in the dataset."""
+        return len(self.samples)
+
 # Example transforms
 def random_flip(image, label):
     axes = [1, 2, 3]
@@ -166,6 +199,6 @@ def random_rotate(image, label, max_angle=15):
     return image.copy(), label.copy()
 
 def combined_transform(image, label):
-    image, label = random_flip(image, label)
+    # image, label = random_flip(image, label)
     image, label = random_rotate(image, label)
     return image, label
