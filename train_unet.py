@@ -282,6 +282,12 @@ def main(args):
         mixed_precision=args.mixed_precision
     )
     
+    # Process modalities argument
+    if args.modalities.lower() == 'all':
+        args.modalities = None  # None means include all modalities
+    else:
+        args.modalities = [mod.strip().lower() for mod in args.modalities.split(',')]
+    
     # Set seed for reproducibility
     if args.seed is not None:
         set_seed(args.seed)
@@ -322,9 +328,9 @@ def main(args):
     val_dir = os.path.join(args.data_root, 'val')
     test_dir = os.path.join(args.data_root, 'test')
 
-    train_dataset = CombinedDataset(train_dir, transform=combined_transform)
-    val_dataset = CombinedDataset(val_dir)
-    test_dataset = CombinedDataset(test_dir)
+    train_dataset = CombinedDataset(train_dir, transform=combined_transform, modalities=args.modalities)
+    val_dataset = CombinedDataset(val_dir, modalities=args.modalities)
+    test_dataset = CombinedDataset(test_dir, modalities=args.modalities)
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2)
     val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=2)

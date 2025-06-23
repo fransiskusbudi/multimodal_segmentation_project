@@ -12,6 +12,27 @@ def run_baseline(args):
         '--batch_size', str(args.batch_size),
         '--epochs', str(args.epochs),
         '--lr', str(args.lr),
+        '--weight_decay', str(args.weight_decay),
+        '--experiment_dir', args.experiment_dir,
+        '--gradient_accumulation_steps', str(args.gradient_accumulation_steps),
+        '--mixed_precision', args.mixed_precision,
+        '--modalities', args.modalities
+    ]
+    
+    if args.seed is not None:
+        cmd.extend(['--seed', str(args.seed)])
+    
+    subprocess.run(cmd)
+
+def run_finetune(args):
+    cmd = [
+        sys.executable, 'finetune_ct.py',
+        '--pretrained_model', args.pretrained_model,
+        '--data_root', args.data_root,
+        '--batch_size', str(args.batch_size),
+        '--epochs', str(args.epochs),
+        '--lr', str(args.lr),
+        '--weight_decay', str(args.weight_decay),
         '--experiment_dir', args.experiment_dir,
         '--gradient_accumulation_steps', str(args.gradient_accumulation_steps),
         '--mixed_precision', args.mixed_precision,
@@ -49,6 +70,23 @@ def run_finetune(args):
         
     subprocess.run(cmd)
 
+
+
+def run_eval(args):
+    if args.model_path is None:
+        raise ValueError("--model_path is required for evaluation experiments")
+    
+    cmd = [
+        sys.executable, 'test_model.py',
+        '--model_path', args.model_path,
+        '--data_root', args.data_root,
+        '--experiment_dir', args.experiment_dir,
+        '--model_name', args.model_name,
+        '--modalities', args.modalities
+    ]
+    
+    subprocess.run(cmd)
+
 def run_eval(args):
     if args.model_path is None:
         raise ValueError("--model_path is required for evaluation experiments")
@@ -79,7 +117,7 @@ def main():
 
     parser = argparse.ArgumentParser(description='Orchestrate multimodal segmentation experiments')
     parser.add_argument('--experiment', type=str, default='train', 
-                       choices=['train', 'eval', 'transfer', 'dann', 'distill', 'cyclegan'], 
+                       choices=['train', 'finetune', 'eval', 'transfer', 'dann', 'distill', 'cyclegan'], 
                        help='Experiment type')
     parser.add_argument('--data_root', type=str, default='datasets/resampled', 
                        help='Root directory of dataset splits')
@@ -123,9 +161,12 @@ def main():
 
     if args.experiment == 'train':
         run_baseline(args)
+    elif args.experiment == 'finetune':
+        if args.pretrained_model is None:
+            raise ValueError("--pretrained_model is required for fine-tuning experiments")
+        run_finetune(args)
     elif args.experiment == 'eval':
-        # TODO: Implement evaluation script call
-        print("Evaluation not implemented yet.")
+        run_eval(args)
     elif args.experiment == 'transfer':
         # TODO: Implement transfer learning script call
         print("Transfer learning not implemented yet.")
