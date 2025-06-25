@@ -29,13 +29,13 @@ PRETRAINED_MODEL="/home/s2670828/multimodal_segmentation_project/experiments/exp
 DATA_ROOT="/home/s2670828/multimodal_segmentation_project/datasets/resampled"  # Replace with your data path
 EXPERIMENT_DIR="experiments"
 BATCH_SIZE=1
-EPOCHS=15
+EPOCHS=50
 LEARNING_RATE=0.00001
 WEIGHT_DECAY=0.05
 SEED=42
 MODALITIES="ct"  # Options: "ct", "mri", "ct,mri", "all"
-FREEZE_ENCODER=true  # Set to true to freeze encoder layers and prevent overfitting to CT data
-FREEZE_ENCODER_EPOCH=5  # Epoch to freeze encoder (set to null or comment out to disable)
+FREEZE_ENCODER=false  # Set to true to freeze encoder layers and prevent overfitting to CT data
+# FREEZE_ENCODER_EPOCH=5  # Epoch to freeze encoder (set to null or comment out to disable)
 
 # Run fine-tuning with main.py orchestrator
 echo "Starting fine-tuning with main.py orchestrator..."
@@ -62,6 +62,8 @@ python main.py \
     --gradient_accumulation_steps 2 \
     --mixed_precision fp16 \
     $([ "$FREEZE_ENCODER" = true ] && echo "--freeze_encoder") \
-    $([ -n "$FREEZE_ENCODER_EPOCH" ] && echo "--freeze_encoder_epoch $FREEZE_ENCODER_EPOCH")
+    $([ -n "$FREEZE_ENCODER_EPOCH" ] && echo "--freeze_encoder_epoch $FREEZE_ENCODER_EPOCH") \
+    # --early_stopping \
+    # --patience 5
 
 echo "Fine-tuning completed!" 

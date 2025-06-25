@@ -358,8 +358,13 @@ def main(args):
     best_val_dice = 0
     start_time = time.time()
     encoder_frozen = False
+    # Early stopping variables
+    patience_counter = 0
+    early_stop = False
     
     for epoch in range(args.epochs):
+        if early_stop:
+            break
         epoch_start_time = time.time()
         
         # Check if we need to freeze/unfreeze encoder
@@ -433,6 +438,7 @@ def main(args):
         # Save best model
         if val_dice > best_val_dice:
             best_val_dice = val_dice
+            patience_counter = 0
             accelerator.wait_for_everyone()
             unwrapped_model = accelerator.unwrap_model(model)
             best_model_path = os.path.join(checkpoint_dir, f"best_model_{experiment_name}.pth")
@@ -446,6 +452,13 @@ def main(args):
                 'val_dice': val_dice,
                 'encoder_frozen': encoder_frozen,
             }, best_model_path)
+        else:
+            if args.early_stopping:
+                patience_counter += 1
+                if patience_counter >= args.patience:
+                    if accelerator.is_main_process:
+                        print(f"[EARLY STOPPING] No improvement in validation Dice for {args.patience} epochs. Stopping training early at epoch {epoch+1}.")
+                    early_stop = True
 
     # Plot training metrics only on main process
     if accelerator.is_main_process:
@@ -470,6 +483,8 @@ if __name__ == "__main__":
     parser.add_argument('--mixed_precision', type=str, default='no', choices=['no', 'fp16', 'bf16'], help='Mixed precision training')
     parser.add_argument('--modalities', type=str, default='all', help='Comma-separated list of modalities to include')
     parser.add_argument('--freeze_encoder_epoch', type=int, default=None, help='Epoch to freeze the encoder')
+    parser.add_argument('--early_stopping', action='store_true', help='Enable early stopping based on validation Dice')
+    parser.add_argument('--patience', type=int, default=10, help='Number of epochs to wait for improvement before stopping (used if early stopping is enabled)')
     
     args = parser.parse_args()
     main(args) 

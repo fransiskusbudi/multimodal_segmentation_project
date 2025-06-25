@@ -32,7 +32,7 @@ def create_finetune_experiment_name(args):
     base_model = os.path.basename(args.pretrained_model).split('.')[0]
     freeze_str = "frozen_enc" if args.freeze_encoder else "unfrozen_enc"
     param_str = f"ft_ct_bs{args.batch_size}_ep{args.epochs}_lr{args.lr}_wd{args.weight_decay}_{freeze_str}"
-    return f"finetune_{base_model}_{timestamp}_{param_str}"
+    return f"finetune_{timestamp}_{base_model}"#_{param_str}"
 
 def plot_finetune_metrics(log_file, save_dir):
     """Create and save plots of fine-tuning metrics."""
@@ -241,26 +241,37 @@ def freeze_encoder(model, accelerator):
     """Freeze the encoder part of the UNet3D model to prevent overfitting."""
     if accelerator.is_main_process:
         print("🔒 Freezing encoder layers to prevent overfitting...")
-    
-    # Freeze encoder layers
     for param in model.encoder.parameters():
         param.requires_grad = False
-    
-    # Freeze bottleneck
     for param in model.bottleneck.parameters():
         param.requires_grad = False
-    
-    # Count frozen and trainable parameters
     frozen_params = sum(p.numel() for p in model.parameters() if not p.requires_grad)
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total_params = frozen_params + trainable_params
-    
     if accelerator.is_main_process:
         print(f"📊 Parameter Summary:")
         print(f"   Frozen parameters: {frozen_params:,} ({frozen_params/total_params*100:.1f}%)")
         print(f"   Trainable parameters: {trainable_params:,} ({trainable_params/total_params*100:.1f}%)")
         print(f"   Total parameters: {total_params:,}")
         print("✅ Encoder frozen successfully!")
+
+def unfreeze_encoder(model, accelerator):
+    """Unfreeze the encoder part of the UNet3D model."""
+    if accelerator.is_main_process:
+        print("🔓 Unfreezing encoder layers...")
+    for param in model.encoder.parameters():
+        param.requires_grad = True
+    for param in model.bottleneck.parameters():
+        param.requires_grad = True
+    frozen_params = sum(p.numel() for p in model.parameters() if not p.requires_grad)
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total_params = frozen_params + trainable_params
+    if accelerator.is_main_process:
+        print(f"📊 Parameter Summary:")
+        print(f"   Frozen parameters: {frozen_params:,} ({frozen_params/total_params*100:.1f}%)")
+        print(f"   Trainable parameters: {trainable_params:,} ({trainable_params/total_params*100:.1f}%)")
+        print(f"   Total parameters: {total_params:,}")
+        print("✅ Encoder unfrozen successfully!")
 
 def main(args):
     # Initialize accelerator
@@ -325,10 +336,11 @@ def main(args):
     # Load pre-trained model
     model = load_pretrained_model(args.pretrained_model, model, accelerator)
     
-    # Freeze encoder if requested
+    # Freeze encoder if requested (at start)
+    encoder_frozen = False
     if args.freeze_encoder:
         freeze_encoder(model, accelerator)
-    
+        encoder_frozen = True
     # Optimizer - only optimize trainable parameters
     trainable_params = filter(lambda p: p.requires_grad, model.parameters())
     optimizer = optim.AdamW(trainable_params, lr=args.lr, weight_decay=args.weight_decay)
@@ -345,44 +357,58 @@ def main(args):
             writer = csv.writer(f)
             writer.writerow(['epoch', 'time', 'train_loss', 'val_loss', 
                            'train_dice', 'val_dice', 'train_iou', 'val_iou',
-                           'train_acc', 'val_acc'])
+                           'train_acc', 'val_acc', 'encoder_frozen'])
     
     # Fine-tuning loop
     best_val_dice = 0
     start_time = time.time()
+    # Early stopping variables
+    patience_counter = 0
+    early_stop = False
     
     for epoch in range(args.epochs):
+        if early_stop:
+            break
         epoch_start_time = time.time()
-        
+        # Check if we need to freeze/unfreeze encoder at specific epoch
+        if args.freeze_encoder_epoch is not None:
+            if epoch == args.freeze_encoder_epoch and not encoder_frozen:
+                if accelerator.is_main_process:
+                    print(f"[INFO] 🔒 Freezing encoder at epoch {epoch+1}")
+                freeze_encoder(model, accelerator)
+                trainable_params = filter(lambda p: p.requires_grad, model.parameters())
+                optimizer = optim.AdamW(trainable_params, lr=args.lr, weight_decay=args.weight_decay)
+                optimizer = accelerator.prepare(optimizer)
+                encoder_frozen = True
+            elif epoch == args.freeze_encoder_epoch + 1 and encoder_frozen:
+                if accelerator.is_main_process:
+                    print(f"[INFO] 🔓 Unfreezing encoder at epoch {epoch+1}")
+                unfreeze_encoder(model, accelerator)
+                optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+                optimizer = accelerator.prepare(optimizer)
+                encoder_frozen = False
         # Training
         train_loss, train_iou, train_dice, train_acc = train_one_epoch(
             model, train_loader, optimizer, accelerator, epoch, args)
-        
         # Validation
         val_loss, val_iou, val_dice, val_acc = evaluate(
             model, val_loader, accelerator, epoch, args)
-        
         # Calculate epoch time
         epoch_time = time.time() - epoch_start_time
-        
         # Log metrics only on main process
         if accelerator.is_main_process:
             print(f"[EPOCH] 📊 Fine-tuning Epoch {epoch+1}/{args.epochs} - Time: {format_time(epoch_time)} | "
                   f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | "
                   f"Train IoU: {train_iou:.4f} | Val IoU: {val_iou:.4f} | "
                   f"Train Dice: {train_dice:.4f} | Val Dice: {val_dice:.4f} | "
-                  f"Train Acc: {train_acc:.4f} | Val Acc: {val_acc:.4f}")
-            
-            # Save to CSV
+                  f"Train Acc: {train_acc:.4f} | Val Acc: {val_acc:.4f} | "
+                  f"Encoder: {'🔒' if encoder_frozen else '🫠🔓'}")
             with open(log_file, 'a', newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow([epoch+1, epoch_time, train_loss, val_loss,
                                train_dice, val_dice, train_iou, val_iou,
-                               train_acc, val_acc])
-
-            # Log GPU usage after each epoch
+                               train_acc, val_acc, encoder_frozen])
             log_gpu_usage(gpu_log_file)
-
         # Save checkpoint every 25 epochs
         if (epoch + 1) % 25 == 0:
             accelerator.wait_for_everyone()
@@ -397,12 +423,12 @@ def main(args):
                 'val_loss': val_loss,
                 'train_dice': train_dice,
                 'val_dice': val_dice,
-                'encoder_frozen': args.freeze_encoder,
+                'encoder_frozen': encoder_frozen,
             }, checkpoint_path)
-        
         # Save best model
         if val_dice > best_val_dice:
             best_val_dice = val_dice
+            patience_counter = 0
             accelerator.wait_for_everyone()
             unwrapped_model = accelerator.unwrap_model(model)
             best_model_path = os.path.join(checkpoint_dir, f"best_finetuned_model_{experiment_name}.pth")
@@ -414,8 +440,15 @@ def main(args):
                 'val_loss': val_loss,
                 'train_dice': train_dice,
                 'val_dice': val_dice,
-                'encoder_frozen': args.freeze_encoder,
+                'encoder_frozen': encoder_frozen,
             }, best_model_path)
+        else:
+            if args.early_stopping:
+                patience_counter += 1
+                if patience_counter >= args.patience:
+                    if accelerator.is_main_process:
+                        print(f"[EARLY STOPPING] No improvement in validation Dice for {args.patience} epochs. Stopping fine-tuning early at epoch {epoch+1}.")
+                    early_stop = True
 
     # Plot fine-tuning metrics only on main process
     if accelerator.is_main_process:
@@ -441,6 +474,9 @@ if __name__ == "__main__":
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1, help='Number of steps to accumulate gradients')
     parser.add_argument('--mixed_precision', type=str, default='no', choices=['no', 'fp16', 'bf16'], help='Mixed precision training')
     parser.add_argument('--freeze_encoder', action='store_true', help='Freeze encoder layers to prevent overfitting to CT data')
+    parser.add_argument('--freeze_encoder_epoch', type=int, default=None, help='Epoch to freeze the encoder (set to null or comment out to disable)')
+    parser.add_argument('--early_stopping', action='store_true', help='Enable early stopping based on validation Dice')
+    parser.add_argument('--patience', type=int, default=10, help='Number of epochs to wait for improvement before stopping (used if early stopping is enabled)')
     
     args = parser.parse_args()
     

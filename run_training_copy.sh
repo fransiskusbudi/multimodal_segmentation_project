@@ -61,7 +61,9 @@ accelerate launch --num_processes=2 --main_process_port 29503 main.py \
     --lr $LR \
     --experiment_dir $EXPERIMENT_DIR \
     --gradient_accumulation_steps $GRAD_ACCUM_STEPS \
-    --mixed_precision fp16  # Enable mixed precision training
+    --mixed_precision fp16 \
+    --early_stopping \
+    --patience 10
 
 # echo "Deleting scratch disk path: ${dest_path}"
 # rm -rf ${dest_path}

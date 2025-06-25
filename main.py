@@ -22,6 +22,12 @@ def run_baseline(args):
     if args.seed is not None:
         cmd.extend(['--seed', str(args.seed)])
     
+    if args.early_stopping:
+        cmd.append('--early_stopping')
+    
+    if args.patience is not None:
+        cmd.extend(['--patience', str(args.patience)])
+    
     subprocess.run(cmd)
 
 def run_finetune(args):
@@ -45,45 +51,14 @@ def run_finetune(args):
     if args.freeze_encoder_epoch is not None:
         cmd.extend(['--freeze_encoder_epoch', str(args.freeze_encoder_epoch)])
     
-    subprocess.run(cmd)
-
-def run_finetune(args):
-    cmd = [
-        sys.executable, 'finetune_ct.py',
-        '--pretrained_model', args.pretrained_model,
-        '--data_root', args.data_root,
-        '--batch_size', str(args.batch_size),
-        '--epochs', str(args.epochs),
-        '--lr', str(args.lr),
-        '--weight_decay', str(args.weight_decay),
-        '--experiment_dir', args.experiment_dir,
-        '--gradient_accumulation_steps', str(args.gradient_accumulation_steps),
-        '--mixed_precision', args.mixed_precision,
-        '--modalities', args.modalities
-    ]
-    
-    if args.seed is not None:
-        cmd.extend(['--seed', str(args.seed)])
-    
-     if args.freeze_encoder:
+    if args.freeze_encoder:
         cmd.append('--freeze_encoder')
-        
-    subprocess.run(cmd)
-
-
-
-def run_eval(args):
-    if args.model_path is None:
-        raise ValueError("--model_path is required for evaluation experiments")
     
-    cmd = [
-        sys.executable, 'test_model.py',
-        '--model_path', args.model_path,
-        '--data_root', args.data_root,
-        '--experiment_dir', args.experiment_dir,
-        '--model_name', args.model_name,
-        '--modalities', args.modalities
-    ]
+    if args.early_stopping:
+        cmd.append('--early_stopping')
+    
+    if args.patience is not None:
+        cmd.extend(['--patience', str(args.patience)])
     
     subprocess.run(cmd)
 
@@ -156,6 +131,9 @@ def main():
     parser.add_argument('--mixed_precision', type=str, default='no',
                        choices=['no', 'fp16', 'bf16'],
                        help='Mixed precision training type')
+    
+    parser.add_argument('--early_stopping', action='store_true', help='Enable early stopping based on validation Dice')
+    parser.add_argument('--patience', type=int, default=10, help='Number of epochs to wait for improvement before stopping (used if early stopping is enabled)')
     
     args = parser.parse_args()
 
