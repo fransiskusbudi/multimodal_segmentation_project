@@ -26,8 +26,10 @@ def load_model(model_path, device):
         state_dict = checkpoint['model_state_dict']
     else:
         state_dict = checkpoint
-        
-    model.load_state_dict(state_dict)
+    
+    # Remove 'module.' prefix if present
+    new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+    model.load_state_dict(new_state_dict)
     model.to(device)
     model.eval()
     return model
@@ -367,7 +369,10 @@ def main(args):
     # Load model
     model = UNet3D(in_channels=1, out_channels=4)  # 4 classes: background + spleen + liver + kidneys
     checkpoint = torch.load(args.model_path, map_location=accelerator.device)
-    model.load_state_dict(checkpoint['model_state_dict'])
+    state_dict = checkpoint['model_state_dict'] if 'model_state_dict' in checkpoint else checkpoint
+    # Remove 'module.' prefix if present
+    new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+    model.load_state_dict(new_state_dict)
     model = model.to(accelerator.device)
     
     # Prepare test dataset

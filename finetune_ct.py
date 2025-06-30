@@ -238,15 +238,15 @@ def load_pretrained_model(model_path, model, accelerator):
     return model
 
 def freeze_encoder(model, accelerator):
-    """Freeze the encoder part of the UNet3D model to prevent overfitting."""
+    real_model = model.module if hasattr(model, "module") else model
     if accelerator.is_main_process:
         print("🔒 Freezing encoder layers to prevent overfitting...")
-    for param in model.encoder.parameters():
+    for param in real_model.encoder.parameters():
         param.requires_grad = False
-    for param in model.bottleneck.parameters():
+    for param in real_model.bottleneck.parameters():
         param.requires_grad = False
-    frozen_params = sum(p.numel() for p in model.parameters() if not p.requires_grad)
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    frozen_params = sum(p.numel() for p in real_model.parameters() if not p.requires_grad)
+    trainable_params = sum(p.numel() for p in real_model.parameters() if p.requires_grad)
     total_params = frozen_params + trainable_params
     if accelerator.is_main_process:
         print(f"📊 Parameter Summary:")
@@ -256,15 +256,15 @@ def freeze_encoder(model, accelerator):
         print("✅ Encoder frozen successfully!")
 
 def unfreeze_encoder(model, accelerator):
-    """Unfreeze the encoder part of the UNet3D model."""
+    real_model = model.module if hasattr(model, "module") else model
     if accelerator.is_main_process:
         print("🔓 Unfreezing encoder layers...")
-    for param in model.encoder.parameters():
+    for param in real_model.encoder.parameters():
         param.requires_grad = True
-    for param in model.bottleneck.parameters():
+    for param in real_model.bottleneck.parameters():
         param.requires_grad = True
-    frozen_params = sum(p.numel() for p in model.parameters() if not p.requires_grad)
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    frozen_params = sum(p.numel() for p in real_model.parameters() if not p.requires_grad)
+    trainable_params = sum(p.numel() for p in real_model.parameters() if p.requires_grad)
     total_params = frozen_params + trainable_params
     if accelerator.is_main_process:
         print(f"📊 Parameter Summary:")

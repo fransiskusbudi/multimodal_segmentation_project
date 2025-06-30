@@ -77,6 +77,24 @@ def run_eval(args):
     
     subprocess.run(cmd)
 
+def run_distill(args):
+    cmd = [
+        sys.executable, 'distill_unet.py',
+        '--teacher_model', args.teacher_model,
+        '--data_root', args.data_root,
+        '--batch_size', str(args.batch_size),
+        '--epochs', str(args.epochs),
+        '--lr', str(args.lr),
+        '--weight_decay', str(args.weight_decay),
+        '--experiment_dir', args.experiment_dir,
+        '--gradient_accumulation_steps', str(args.gradient_accumulation_steps),
+        '--mixed_precision', args.mixed_precision,
+        '--modalities', args.modalities
+    ]
+    if args.seed is not None:
+        cmd.extend(['--seed', str(args.seed)])
+    subprocess.run(cmd)
+
 def main():
     # Initialize accelerator
     accelerator = Accelerator()
@@ -135,6 +153,10 @@ def main():
     parser.add_argument('--early_stopping', action='store_true', help='Enable early stopping based on validation Dice')
     parser.add_argument('--patience', type=int, default=10, help='Number of epochs to wait for improvement before stopping (used if early stopping is enabled)')
     
+    # Distillation specific arguments
+    parser.add_argument('--teacher_model', type=str, default=None,
+                       help='Path to teacher model checkpoint (required for distillation)')
+    
     args = parser.parse_args()
 
     if args.experiment == 'train':
@@ -152,8 +174,9 @@ def main():
         # TODO: Implement DANN script call
         print("DANN not implemented yet.")
     elif args.experiment == 'distill':
-        # TODO: Implement knowledge distillation script call
-        print("Knowledge distillation not implemented yet.")
+        if args.teacher_model is None:
+            raise ValueError("--teacher_model is required for distillation experiments")
+        run_distill(args)
     elif args.experiment == 'cyclegan':
         # TODO: Implement CycleGAN script call
         print("CycleGAN not implemented yet.")

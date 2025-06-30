@@ -31,7 +31,7 @@ EXPERIMENT_DIR="experiments"
 BATCH_SIZE=1
 EPOCHS=50
 LEARNING_RATE=0.00001
-WEIGHT_DECAY=0.05
+WEIGHT_DECAY=0.0001
 SEED=42
 MODALITIES="ct"  # Options: "ct", "mri", "ct,mri", "all"
 FREEZE_ENCODER=false  # Set to true to freeze encoder layers and prevent overfitting to CT data
@@ -48,7 +48,7 @@ echo "Learning rate: $LEARNING_RATE"
 echo "Freeze encoder: $FREEZE_ENCODER"
 echo "Freeze encoder epoch: $FREEZE_ENCODER_EPOCH"
 
-python main.py \
+accelerate launch --num_processes=1 --main_process_port 29503 main.py \
     --experiment finetune \
     --pretrained_model "$PRETRAINED_MODEL" \
     --data_root "$DATA_ROOT" \
@@ -59,7 +59,7 @@ python main.py \
     --weight_decay $WEIGHT_DECAY \
     --seed $SEED \
     --modalities $MODALITIES \
-    --gradient_accumulation_steps 2 \
+    --gradient_accumulation_steps 8 \
     --mixed_precision fp16 \
     $([ "$FREEZE_ENCODER" = true ] && echo "--freeze_encoder") \
     $([ -n "$FREEZE_ENCODER_EPOCH" ] && echo "--freeze_encoder_epoch $FREEZE_ENCODER_EPOCH") \

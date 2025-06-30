@@ -487,4 +487,10 @@ if __name__ == "__main__":
     parser.add_argument('--patience', type=int, default=10, help='Number of epochs to wait for improvement before stopping (used if early stopping is enabled)')
     
     args = parser.parse_args()
+
+    if args.modalities.lower() == 'all':
+        args.modalities = None  # None means include all modalities
+    else:
+        args.modalities = [mod.strip().lower() for mod in args.modalities.split(',')]
+
     main(args) 
