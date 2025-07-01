@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from utils.dataloader import CombinedDataset, combined_transform
-from utils.metrics import calculate_metrics, combined_loss, calculate_iou, calculate_dice, calculate_accuracy
+from utils.metrics import calculate_metrics, combined_loss, calculate_iou, calculate_dice, calculate_accuracy, tversky_loss, combined_ce_tversky_loss
 from models.unet import UNet3D
 import numpy as np
 import csv
@@ -145,7 +145,7 @@ def plot_training_metrics(log_file, save_dir):
     plt.ylabel('Time (seconds)')
     plt.title('Training Time per Epoch')
     plt.grid(True)
-    
+
     # Add encoder freezing visualization
     if any(encoder_frozen):
         frozen_regions = []
@@ -175,7 +175,36 @@ def log_gpu_usage(log_file="gpu_usage.log"):
         f.write(subprocess.getoutput("nvidia-smi"))
         f.write("\n" + "="*80 + "\n")
 
-def train_one_epoch(model, loader, optimizer, accelerator, epoch, args):
+def get_loss_fn(loss_type):
+    if loss_type == 'ce':
+        return nn.CrossEntropyLoss()
+    elif loss_type == 'tversky':
+        def loss_fn(pred, target):
+            return tversky_loss(pred, target, alpha=0.5, beta=0.5)
+        return loss_fn
+    elif loss_type == 'dice':
+        def loss_fn(pred, target):
+            # Use only dice part from combined_loss
+            target_ = target.squeeze(1)
+            pred_softmax = torch.nn.functional.softmax(pred, dim=1)
+            dice = 0
+            for class_idx in range(1, pred_softmax.size(1)):
+                pred_mask = pred_softmax[:, class_idx]
+                target_mask = (target_ == class_idx).float()
+                intersection = (pred_mask * target_mask).sum()
+                union = pred_mask.sum() + target_mask.sum()
+                dice += 1 - (2. * intersection + 1e-5) / (union + 1e-5)
+            dice = dice / (pred_softmax.size(1) - 1)
+            return dice
+        return loss_fn
+    elif loss_type == 'ce_tversky':
+        def loss_fn(pred, target):
+            return combined_ce_tversky_loss(pred, target, alpha=0.5, beta=0.5)
+        return loss_fn
+    else:
+        return combined_loss
+
+def train_one_epoch(model, loader, optimizer, accelerator, epoch, args, loss_fn):
     model.train()
     running_loss, total_iou, total_dice, total_acc = 0, 0, 0, 0
     num_batches = len(loader)
@@ -192,7 +221,7 @@ def train_one_epoch(model, loader, optimizer, accelerator, epoch, args):
         with accelerator.accumulate(model):
             optimizer.zero_grad()
             outputs = model(images)
-            loss = combined_loss(outputs, labels)  # Now handles multi-class
+            loss = loss_fn(outputs, labels)
             accelerator.backward(loss)
             optimizer.step()
             
@@ -203,10 +232,10 @@ def train_one_epoch(model, loader, optimizer, accelerator, epoch, args):
                 acc = calculate_accuracy(outputs, labels)
 
             # Wrap scalar values as tensors for gathering
-            gathered_loss = accelerator.gather(torch.tensor(loss.item(), device=accelerator.device)).mean().item()
-            gathered_dice = accelerator.gather(torch.tensor(dice, device=accelerator.device)).mean().item()
-            gathered_iou = accelerator.gather(torch.tensor(iou, device=accelerator.device)).mean().item()
-            gathered_acc = accelerator.gather(torch.tensor(acc, device=accelerator.device)).mean().item()
+            gathered_loss = accelerator.gather(torch.as_tensor(loss.item(), device=accelerator.device)).mean().item()
+            gathered_dice = accelerator.gather(torch.as_tensor(dice, device=accelerator.device)).mean().item()
+            gathered_iou = accelerator.gather(torch.as_tensor(iou, device=accelerator.device)).mean().item()
+            gathered_acc = accelerator.gather(torch.as_tensor(acc, device=accelerator.device)).mean().item()
 
             # Accumulate gathered values
             running_loss += gathered_loss
@@ -227,7 +256,7 @@ def train_one_epoch(model, loader, optimizer, accelerator, epoch, args):
             total_dice / num_batches,
             total_acc / num_batches)
 
-def evaluate(model, loader, accelerator, epoch, args):
+def evaluate(model, loader, accelerator, epoch, args, loss_fn):
     model.eval()
     running_loss, total_iou, total_dice, total_acc = 0, 0, 0, 0
     num_batches = len(loader)
@@ -243,7 +272,7 @@ def evaluate(model, loader, accelerator, epoch, args):
     with torch.no_grad():
         for i, (images, labels) in enumerate(progress_bar):
             outputs = model(images)
-            loss = combined_loss(outputs, labels)  # Now handles multi-class
+            loss = loss_fn(outputs, labels)
             
             # Calculate metrics
             iou = calculate_iou(outputs, labels)
@@ -251,10 +280,10 @@ def evaluate(model, loader, accelerator, epoch, args):
             acc = calculate_accuracy(outputs, labels)
             
             # Gather metrics from all processes
-            gathered_loss = accelerator.gather(torch.tensor(loss.item(), device=accelerator.device)).mean()
-            gathered_dice = accelerator.gather(torch.tensor(dice, device=accelerator.device)).mean()
-            gathered_iou = accelerator.gather(torch.tensor(iou, device=accelerator.device)).mean()
-            gathered_acc = accelerator.gather(torch.tensor(acc, device=accelerator.device)).mean()
+            gathered_loss = accelerator.gather(torch.as_tensor(loss.item(), device=accelerator.device)).mean()
+            gathered_dice = accelerator.gather(torch.as_tensor(dice, device=accelerator.device)).mean()
+            gathered_iou = accelerator.gather(torch.as_tensor(iou, device=accelerator.device)).mean()
+            gathered_acc = accelerator.gather(torch.as_tensor(acc, device=accelerator.device)).mean()
             
             running_loss += gathered_loss.item()
             total_iou += gathered_iou.item()
@@ -283,10 +312,11 @@ def main(args):
     )
     
     # Process modalities argument
-    if args.modalities.lower() == 'all':
-        args.modalities = None  # None means include all modalities
-    else:
-        args.modalities = [mod.strip().lower() for mod in args.modalities.split(',')]
+    if isinstance(args.modalities, str):
+        if args.modalities.lower() == 'all':
+            args.modalities = None  # None means include all modalities
+        else:
+            args.modalities = [mod.strip().lower() for mod in args.modalities.split(',')]
     
     # Set seed for reproducibility
     if args.seed is not None:
@@ -340,14 +370,17 @@ def main(args):
     model = UNet3D(in_channels=1, out_channels=4)  # 4 classes: background + spleen + liver + kidneys
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     
+    # Add ReduceLROnPlateau scheduler
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=10, factor=0.1, min_lr=1e-6, verbose=True)
+    
     # Prepare for distributed training
     model, optimizer, train_loader, val_loader, test_loader = accelerator.prepare(
         model, optimizer, train_loader, val_loader, test_loader
     )
 
     # Log file setup
+    log_file = os.path.join(log_dir, 'train_log.csv')
     if accelerator.is_main_process:
-        log_file = os.path.join(log_dir, 'train_log.csv')
         with open(log_file, 'w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(['epoch', 'time', 'train_loss', 'val_loss', 
@@ -361,6 +394,8 @@ def main(args):
     # Early stopping variables
     patience_counter = 0
     early_stop = False
+    
+    loss_fn = get_loss_fn(args.loss)
     
     for epoch in range(args.epochs):
         if early_stop:
@@ -390,11 +425,19 @@ def main(args):
         
         # Training
         train_loss, train_iou, train_dice, train_acc = train_one_epoch(
-            model, train_loader, optimizer, accelerator, epoch, args)
+            model, train_loader, optimizer, accelerator, epoch, args, loss_fn)
         
         # Validation
         val_loss, val_iou, val_dice, val_acc = evaluate(
-            model, val_loader, accelerator, epoch, args)
+            model, val_loader, accelerator, epoch, args, loss_fn)
+        
+        # Step the scheduler with validation loss
+        scheduler.step(val_loss)
+        
+        # Log learning rate
+        if accelerator.is_main_process:
+            current_lr = optimizer.param_groups[0]['lr']
+            print(f"[LR] Learning rate after epoch {epoch+1}: {current_lr}")
         
         # Calculate epoch time
         epoch_time = time.time() - epoch_start_time
@@ -412,8 +455,8 @@ def main(args):
             with open(log_file, 'a', newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow([epoch+1, epoch_time, train_loss, val_loss,
-                               train_dice, val_dice, train_iou, val_iou,
-                               train_acc, val_acc, encoder_frozen])
+                                train_dice, val_dice, train_iou, val_iou,
+                                train_acc, val_acc, encoder_frozen])
 
             # Log GPU usage after each epoch
             log_gpu_usage(gpu_log_file)
@@ -485,12 +528,16 @@ if __name__ == "__main__":
     parser.add_argument('--freeze_encoder_epoch', type=int, default=None, help='Epoch to freeze the encoder')
     parser.add_argument('--early_stopping', action='store_true', help='Enable early stopping based on validation Dice')
     parser.add_argument('--patience', type=int, default=10, help='Number of epochs to wait for improvement before stopping (used if early stopping is enabled)')
+    parser.add_argument('--loss', type=str, default='combined', choices=['combined', 'ce', 'dice', 'tversky', 'ce_tversky'], help='Loss function to use')
     
     args = parser.parse_args()
 
-    if args.modalities.lower() == 'all':
-        args.modalities = None  # None means include all modalities
-    else:
-        args.modalities = [mod.strip().lower() for mod in args.modalities.split(',')]
+    if isinstance(args.modalities, str):
+        if args.modalities.lower() == 'all':
+            args.modalities = None  # None means include all modalities
+        else:
+            args.modalities = [mod.strip().lower() for mod in args.modalities.split(',')]
+
+    loss_fn = get_loss_fn(args.loss)
 
     main(args) 

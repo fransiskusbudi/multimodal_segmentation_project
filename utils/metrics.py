@@ -133,4 +133,36 @@ def calculate_metrics(pred, target):
     iou = iou_score(pred, target)
     acc = accuracy_score(pred, target)
     return dice, iou, acc
+
+def tversky_loss(pred, target, alpha=0.5, beta=0.5, epsilon=1e-6):
+    """
+    Tversky loss for multi-class segmentation
+    pred: model output (B, C, H, W, D) where C is number of classes
+    target: ground truth (B, 1, H, W, D) with class indices
+    alpha, beta: Tversky parameters (default 0.5, 0.5 for Dice)
+    """
+    target = target.squeeze(1)  # (B, H, W, D)
+    pred_softmax = F.softmax(pred, dim=1)
+    tversky_loss = 0
+    for class_idx in range(1, pred_softmax.size(1)):  # Skip background
+        pred_mask = pred_softmax[:, class_idx]
+        target_mask = (target == class_idx).float()
+        tp = (pred_mask * target_mask).sum()
+        fp = (pred_mask * (1 - target_mask)).sum()
+        fn = ((1 - pred_mask) * target_mask).sum()
+        tversky = (tp + epsilon) / (tp + alpha * fp + beta * fn + epsilon)
+        tversky_loss += 1 - tversky
+    tversky_loss = tversky_loss / (pred_softmax.size(1) - 1)
+    return tversky_loss
+
+def combined_ce_tversky_loss(pred, target, alpha=0.7, beta=0.3):
+    """
+    Combined CrossEntropy and Tversky loss for multi-class segmentation
+    pred: model output (B, C, H, W, D) where C is number of classes
+    target: ground truth (B, 1, H, W, D) with class indices
+    """
+    target_ = target.squeeze(1)
+    ce_loss = nn.CrossEntropyLoss()(pred, target_)
+    tversky = tversky_loss(pred, target, alpha=alpha, beta=beta)
+    return 0.3 * ce_loss + 0.7 * tversky
  

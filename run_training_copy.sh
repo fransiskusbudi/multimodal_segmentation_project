@@ -23,6 +23,8 @@ EPOCHS=100
 LR=0.001
 EXPERIMENT_DIR="experiments"
 GRAD_ACCUM_STEPS=8  # Doubled gradient accumulation to compensate for fewer GPUs
+MODALITIES="mri"  # Default to all modalities; change as needed
+WEIGHT_DECAY=0.0001  # Default weight decay; change as needed
 
 # Create directories if they don't exist
 mkdir -p $EXPERIMENT_DIR
@@ -59,11 +61,14 @@ accelerate launch --num_processes=2 --main_process_port 29503 main.py \
     --batch_size $BATCH_SIZE \
     --epochs $EPOCHS \
     --lr $LR \
+    --weight_decay $WEIGHT_DECAY \
     --experiment_dir $EXPERIMENT_DIR \
     --gradient_accumulation_steps $GRAD_ACCUM_STEPS \
     --mixed_precision fp16 \
+    --loss ce_tversky \
+    --modalities $MODALITIES \
     --early_stopping \
-    --patience 10
+    --patience 10 \
 
 # echo "Deleting scratch disk path: ${dest_path}"
 # rm -rf ${dest_path}

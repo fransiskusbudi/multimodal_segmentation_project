@@ -16,7 +16,8 @@ def run_baseline(args):
         '--experiment_dir', args.experiment_dir,
         '--gradient_accumulation_steps', str(args.gradient_accumulation_steps),
         '--mixed_precision', args.mixed_precision,
-        '--modalities', args.modalities
+        '--modalities', args.modalities,
+        '--loss', args.loss
     ]
     
     if args.seed is not None:
@@ -156,6 +157,10 @@ def main():
     # Distillation specific arguments
     parser.add_argument('--teacher_model', type=str, default=None,
                        help='Path to teacher model checkpoint (required for distillation)')
+    
+    parser.add_argument('--loss', type=str, default='combined',
+        choices=['combined', 'ce', 'dice', 'tversky', 'ce_tversky'],
+        help='Loss function to use for training')
     
     args = parser.parse_args()
 
