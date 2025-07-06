@@ -68,7 +68,7 @@ accelerate launch --num_processes=2 --main_process_port 29503 main.py \
     --loss ce_tversky \
     --modalities $MODALITIES \
     --early_stopping \
-    --patience 10 \
+    --patience 25 \
 
 # echo "Deleting scratch disk path: ${dest_path}"
 # rm -rf ${dest_path}

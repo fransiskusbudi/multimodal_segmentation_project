@@ -331,7 +331,7 @@ def main(args):
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=2)
 
     # Model and optimizer
-    model = UNet3D(in_channels=1, out_channels=4)  # 4 classes: background + spleen + liver + kidneys
+    model = UNet3D(in_channels=1, out_channels=4, dropout_rate=args.dropout_rate)  # 4 classes: background + spleen + liver + kidneys
     
     # Load pre-trained model
     model = load_pretrained_model(args.pretrained_model, model, accelerator)
@@ -477,6 +477,7 @@ if __name__ == "__main__":
     parser.add_argument('--freeze_encoder_epoch', type=int, default=None, help='Epoch to freeze the encoder (set to null or comment out to disable)')
     parser.add_argument('--early_stopping', action='store_true', help='Enable early stopping based on validation Dice')
     parser.add_argument('--patience', type=int, default=10, help='Number of epochs to wait for improvement before stopping (used if early stopping is enabled)')
+    parser.add_argument('--dropout_rate', type=float, default=0.1, help='Dropout rate for regularization (default: 0.1)')
     
     args = parser.parse_args()
     

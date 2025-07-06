@@ -210,8 +210,8 @@ def main(args):
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2)
     val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=2)
     # Models
-    teacher = UNet3D(in_channels=1, out_channels=4)
-    student = UNet3D(in_channels=1, out_channels=4)
+    teacher = UNet3D(in_channels=1, out_channels=4, dropout_rate=args.dropout_rate)
+    student = UNet3D(in_channels=1, out_channels=4, dropout_rate=args.dropout_rate)
     teacher = load_teacher_model(args.teacher_model, teacher, accelerator)
     teacher.eval()
     for p in teacher.parameters():
@@ -267,6 +267,7 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=None, help='Random seed for reproducibility')
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1, help='Number of steps to accumulate gradients')
     parser.add_argument('--mixed_precision', type=str, default='no', choices=['no', 'fp16', 'bf16'], help='Mixed precision training type')
+    parser.add_argument('--dropout_rate', type=float, default=0.1, help='Dropout rate for regularization (default: 0.1)')
     return parser.parse_args()
 
 if __name__ == "__main__":

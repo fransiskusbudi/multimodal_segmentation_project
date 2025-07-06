@@ -17,7 +17,8 @@ def run_baseline(args):
         '--gradient_accumulation_steps', str(args.gradient_accumulation_steps),
         '--mixed_precision', args.mixed_precision,
         '--modalities', args.modalities,
-        '--loss', args.loss
+        '--loss', args.loss,
+        '--dropout_rate', str(args.dropout_rate)
     ]
     
     if args.seed is not None:
@@ -43,7 +44,8 @@ def run_finetune(args):
         '--experiment_dir', args.experiment_dir,
         '--gradient_accumulation_steps', str(args.gradient_accumulation_steps),
         '--mixed_precision', args.mixed_precision,
-        '--modalities', args.modalities
+        '--modalities', args.modalities,
+        '--dropout_rate', str(args.dropout_rate)
     ]
     
     if args.seed is not None:
@@ -90,7 +92,8 @@ def run_distill(args):
         '--experiment_dir', args.experiment_dir,
         '--gradient_accumulation_steps', str(args.gradient_accumulation_steps),
         '--mixed_precision', args.mixed_precision,
-        '--modalities', args.modalities
+        '--modalities', args.modalities,
+        '--dropout_rate', str(args.dropout_rate)
     ]
     if args.seed is not None:
         cmd.extend(['--seed', str(args.seed)])
@@ -161,6 +164,8 @@ def main():
     parser.add_argument('--loss', type=str, default='combined',
         choices=['combined', 'ce', 'dice', 'tversky', 'ce_tversky'],
         help='Loss function to use for training')
+    parser.add_argument('--dropout_rate', type=float, default=0.1,
+        help='Dropout rate for regularization (default: 0.1)')
     
     args = parser.parse_args()
 

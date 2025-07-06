@@ -358,7 +358,7 @@ def main(args):
     val_dir = os.path.join(args.data_root, 'val')
     test_dir = os.path.join(args.data_root, 'test')
 
-    train_dataset = CombinedDataset(train_dir, transform=combined_transform, modalities=args.modalities)
+    train_dataset = CombinedDataset(train_dir, transform=combined_transform(), modalities=args.modalities)
     val_dataset = CombinedDataset(val_dir, modalities=args.modalities)
     test_dataset = CombinedDataset(test_dir, modalities=args.modalities)
 
@@ -367,11 +367,11 @@ def main(args):
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=2)
 
     # Model and optimizer
-    model = UNet3D(in_channels=1, out_channels=4)  # 4 classes: background + spleen + liver + kidneys
+    model = UNet3D(in_channels=1, out_channels=4, dropout_rate=args.dropout_rate)  # 4 classes: background + spleen + liver + kidneys
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     
     # Add ReduceLROnPlateau scheduler
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=10, factor=0.1, min_lr=1e-6, verbose=True)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=10, factor=0.1, min_lr=1e-6, verbose=True)
     
     # Prepare for distributed training
     model, optimizer, train_loader, val_loader, test_loader = accelerator.prepare(
@@ -432,7 +432,7 @@ def main(args):
             model, val_loader, accelerator, epoch, args, loss_fn)
         
         # Step the scheduler with validation loss
-        scheduler.step(val_loss)
+        scheduler.step(val_dice)
         
         # Log learning rate
         if accelerator.is_main_process:
@@ -529,6 +529,7 @@ if __name__ == "__main__":
     parser.add_argument('--early_stopping', action='store_true', help='Enable early stopping based on validation Dice')
     parser.add_argument('--patience', type=int, default=10, help='Number of epochs to wait for improvement before stopping (used if early stopping is enabled)')
     parser.add_argument('--loss', type=str, default='combined', choices=['combined', 'ce', 'dice', 'tversky', 'ce_tversky'], help='Loss function to use')
+    parser.add_argument('--dropout_rate', type=float, default=0.1, help='Dropout rate for regularization (default: 0.1)')
     
     args = parser.parse_args()
 

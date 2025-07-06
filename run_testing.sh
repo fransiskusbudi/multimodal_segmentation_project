@@ -18,11 +18,11 @@ echo "Job started at ${dt}"
 
 # Default values
 # MODEL_PATH="experiments/finetune_20250626_174347_best_model_exp_20250618_012521_bs1_ep100_lr0/checkpoints/best_finetuned_model_finetune_20250626_174347_best_model_exp_20250618_012521_bs1_ep100_lr0.pth"
-MODEL_PATH="experiments/exp_20250701_003826_bs1_ep100_lr0.001_wd0.0001/checkpoints/best_model_exp_20250701_003826_bs1_ep100_lr0.001_wd0.0001.pth"
+MODEL_PATH="experiments/exp_20250704_005127_bs1_ep100_lr0.001_wd0.0001/checkpoints/best_model_exp_20250704_005127_bs1_ep100_lr0.001_wd0.0001.pth"
 DATA_ROOT="datasets/resampled"
 EXPERIMENT_DIR="test_results"
 MODEL_NAME="unet"
-MODALITIES="mri"  # Options: "all", "ct", "mri", "ct,mri"
+MODALITIES="ct"  # Options: "all", "ct", "mri", "ct,mri"
 
 # Activate Anaconda environment
 source /home/${USER}/miniconda3/bin/activate diss

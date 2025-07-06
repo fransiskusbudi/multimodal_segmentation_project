@@ -28,7 +28,7 @@ EXPERIMENT_DIR="experiments"
 GRAD_ACCUM_STEPS=8  # Doubled gradient accumulation to compensate for fewer GPUs
 MODALITIES="mri"  # Default to all modalities; change as needed
 WEIGHT_DECAY=0.0001  # Default weight decay; change as needed
-DROPOUT_RATE=0.0  # Default dropout rate; change as needed
+DROPOUT_RATE=0.1  # Default dropout rate; change as needed
 
 # Create directories if they don't exist
 mkdir -p $EXPERIMENT_DIR
@@ -62,7 +62,7 @@ rsync -azvP \
 # accelerate launch --num_processes=2 --main_process_port 29503 src/main.py --train
 
 # Run the training
-accelerate launch --num_processes=2 --main_process_port 29503 main.py \
+accelerate launch --num_processes=2 --main_process_port 29502 main.py \
     --experiment train \
     --data_root $DATA_ROOT \
     --batch_size $BATCH_SIZE \
