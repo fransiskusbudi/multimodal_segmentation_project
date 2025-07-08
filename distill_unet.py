@@ -7,13 +7,14 @@ import torch.nn.functional as F
 import time
 import csv
 from accelerate import Accelerator
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from models.unet import UNet3D
 from utils.dataloader import CombinedDataset
-from utils.metrics import combined_loss, calculate_dice, calculate_iou, calculate_accuracy
+from utils.metrics import combined_loss, calculate_dice, calculate_iou, calculate_accuracy, distillation_loss
 import matplotlib.pyplot as plt
 import subprocess
 from datetime import timedelta
+import numpy as np
 
 
 def load_teacher_model(teacher_path, model, accelerator):
@@ -26,16 +27,6 @@ def load_teacher_model(teacher_path, model, accelerator):
     else:
         raise FileNotFoundError(f"Teacher model checkpoint not found at {teacher_path}")
     return model
-
-def distillation_loss(student_logits, teacher_logits, target, alpha=0.7, temperature=2.0):
-    # Standard segmentation loss (CE + Dice)
-    seg_loss = combined_loss(student_logits, target)
-    # KL divergence between teacher and student softmax outputs
-    student_soft = F.log_softmax(student_logits / temperature, dim=1)
-    teacher_soft = F.softmax(teacher_logits / temperature, dim=1)
-    kl_loss = F.kl_div(student_soft, teacher_soft, reduction='none')  # shape: (B, C, ...)
-    kl_loss = kl_loss.mean() * (temperature ** 2)  # average over all elements
-    return alpha * seg_loss + (1 - alpha) * kl_loss
 
 def format_time(seconds):
     return str(timedelta(seconds=int(seconds)))
@@ -118,7 +109,7 @@ def train_one_epoch(student, teacher, loader, optimizer, accelerator, epoch, arg
             student_logits = student(images)
             with torch.no_grad():
                 teacher_logits = teacher(images)
-            loss = distillation_loss(student_logits, teacher_logits, labels)
+            loss = distillation_loss(student_logits, teacher_logits, labels, args.alpha, args.temperature)
             accelerator.backward(loss)
             optimizer.step()
             optimizer.zero_grad()
@@ -206,6 +197,14 @@ def main(args):
     train_dir = os.path.join(args.data_root, 'train')
     val_dir = os.path.join(args.data_root, 'val')
     train_dataset = CombinedDataset(train_dir, modalities=args.modalities)
+    # Subsample to first 100 samples (not random)
+    indices = list(range(min(100, len(train_dataset))))
+    train_dataset = Subset(train_dataset, indices)
+    
+    # Alternative: Subsample to 100 random samples (commented out)
+    # rng = np.random.default_rng(args.seed) if args.seed is not None else np.random.default_rng()
+    # indices = rng.choice(len(train_dataset), size=100, replace=False)
+    # train_dataset = Subset(train_dataset, indices)
     val_dataset = CombinedDataset(val_dir, modalities=args.modalities)
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2)
     val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=2)
@@ -228,7 +227,12 @@ def main(args):
             writer.writerow(['epoch', 'time', 'train_loss', 'val_loss', 'train_dice', 'val_dice', 'train_iou', 'val_iou', 'train_acc', 'val_acc'])
     best_val_dice = 0
     start_time = time.time()
+    # Early stopping variables
+    patience_counter = 0
+    early_stop = False
     for epoch in range(args.epochs):
+        if early_stop:
+            break
         epoch_start_time = time.time()
         train_loss, train_iou, train_dice, train_acc = train_one_epoch(student, teacher, train_loader, optimizer, accelerator, epoch, args)
         val_loss, val_iou, val_dice, val_acc = evaluate(student, val_loader, accelerator, epoch, args)
@@ -246,7 +250,15 @@ def main(args):
         # Save best model
         if val_dice > best_val_dice:
             best_val_dice = val_dice
+            patience_counter = 0
             torch.save({'model_state_dict': student.state_dict()}, os.path.join(checkpoint_dir, 'best_student.pth'))
+        else:
+            if args.early_stopping:
+                patience_counter += 1
+                if patience_counter >= args.patience:
+                    if accelerator.is_main_process:
+                        print(f"[EARLY STOPPING] No improvement in validation Dice for {args.patience} epochs. Stopping distillation early at epoch {epoch+1}.")
+                    early_stop = True
     if accelerator.is_main_process:
         plot_distill_metrics(log_file, plots_dir)
         total_time = time.time() - start_time
@@ -268,6 +280,10 @@ def parse_args():
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1, help='Number of steps to accumulate gradients')
     parser.add_argument('--mixed_precision', type=str, default='no', choices=['no', 'fp16', 'bf16'], help='Mixed precision training type')
     parser.add_argument('--dropout_rate', type=float, default=0.1, help='Dropout rate for regularization (default: 0.1)')
+    parser.add_argument('--early_stopping', action='store_true', help='Enable early stopping based on validation Dice')
+    parser.add_argument('--patience', type=int, default=10, help='Number of epochs to wait for improvement before stopping (used if early stopping is enabled)')
+    parser.add_argument('--alpha', type=float, default=0.7, help='Weight for segmentation loss in distillation (default: 0.7)')
+    parser.add_argument('--temperature', type=float, default=4.0, help='Temperature for softening logits in distillation (default: 4.0)')
     return parser.parse_args()
 
 if __name__ == "__main__":

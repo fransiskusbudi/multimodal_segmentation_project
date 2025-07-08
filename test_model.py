@@ -10,7 +10,7 @@ import nibabel as nib
 from pathlib import Path
 from tqdm import tqdm
 from datetime import datetime
-from utils.metrics import calculate_iou, calculate_dice, calculate_accuracy
+from utils.metrics import calculate_dice as torch_calculate_dice, calculate_iou as torch_calculate_iou
 import json
 import csv
 
@@ -172,61 +172,6 @@ def create_test_results_dir(base_dir, model_name):
     os.makedirs(test_dir, exist_ok=True)
     return test_dir
 
-def calculate_dice(pred, label, class_idx=None):
-    """
-    Calculate Dice coefficient
-    If class_idx is provided, calculate for that specific class
-    Otherwise, calculate for all classes
-    """
-    if class_idx is not None:
-        pred = (pred == class_idx).astype(float)
-        label = (label == class_idx).astype(float)
-    
-    intersection = np.sum(pred * label)
-    union = np.sum(pred) + np.sum(label)
-    
-    if union == 0:
-        return 1.0  # Both empty
-    return (2.0 * intersection) / union
-
-def calculate_iou(pred, label, class_idx=None):
-    """
-    Calculate Intersection over Union
-    If class_idx is provided, calculate for that specific class
-    Otherwise, calculate for all classes
-    """
-    if class_idx is not None:
-        pred = (pred == class_idx).astype(float)
-        label = (label == class_idx).astype(float)
-    
-    intersection = np.sum(pred * label)
-    union = np.sum(pred) + np.sum(label) - intersection
-    
-    if union == 0:
-        return 1.0  # Both empty
-    return intersection / union
-
-def calculate_metrics(pred, label, class_idx=None):
-    """
-    Calculate precision, recall, and specificity
-    If class_idx is provided, calculate for that specific class
-    Otherwise, calculate for all classes
-    """
-    if class_idx is not None:
-        pred = (pred == class_idx).astype(float)
-        label = (label == class_idx).astype(float)
-    
-    tp = np.sum(pred * label)
-    fp = np.sum(pred * (1 - label))
-    tn = np.sum((1 - pred) * (1 - label))
-    fn = np.sum((1 - pred) * label)
-    
-    precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-    recall = tp / (tp + fn) if (tp + fn) > 0 else 0
-    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
-    
-    return precision, recall, specificity
-
 def test_model(model, test_loader, accelerator, args):
     """
     Test the model and save predictions
@@ -245,6 +190,13 @@ def test_model(model, test_loader, accelerator, args):
     os.makedirs(predictions_dir, exist_ok=True)
     os.makedirs(metrics_dir, exist_ok=True)
     os.makedirs(visualizations_dir, exist_ok=True)
+
+    # Save test configuration
+    test_config_file = os.path.join(results_dir, 'test_config.txt')
+    with open(test_config_file, 'w') as f:
+        f.write(f"Test Configuration:\n")
+        for arg in vars(args):
+            f.write(f"{arg}: {getattr(args, arg)}\n")
     
     # Initialize metrics
     metrics = {
@@ -263,35 +215,39 @@ def test_model(model, test_loader, accelerator, args):
                 print(f"\nProcessing sample {i+1}/{len(test_loader)}")
                 
                 outputs = model(image)
-                pred = outputs.argmax(dim=1)
+                # outputs: (B, C, ...), label: (B, 1, ...)
+                # For per-class metrics, use torch logic as in metrics.py
+                pred_classes = torch.argmax(outputs, dim=1)  # (B, ...)
+                label_classes = label.squeeze(1)  # (B, ...)
                 
-                pred_np = pred.cpu().numpy()
-                label_np = label.cpu().numpy()
-                image_np = image.cpu().numpy()
-                
-                # Get the original NIfTI file for affine and header
-                original_nifti_path = test_loader.dataset.samples[i]['image_path']
-                original_filename = os.path.splitext(os.path.basename(original_nifti_path))[0]
-                print(f"Processing file: {original_filename}")
-                
-                # Save visualization with all three views
-                vis_path = os.path.join(visualizations_dir, f'{original_filename}_pred.png')
-                visualize_prediction(image_np[0, 0], label_np[0], pred_np[0], vis_path)
-                
-                # Save as NIfTI in predictions folder
-                original_nifti = nib.load(original_nifti_path)
-                pred_nifti = nib.Nifti1Image(pred_np[0], affine=original_nifti.affine, header=original_nifti.header)
-                pred_nifti_path = os.path.join(predictions_dir, f'{original_filename}_pred.nii.gz')
-                nib.save(pred_nifti, pred_nifti_path)
-                
-                # Calculate metrics for each class (1=spleen, 2=liver, 3=kidneys)
-                dice_spleen = calculate_dice(pred_np[0], label_np[0], 1)
-                dice_liver = calculate_dice(pred_np[0], label_np[0], 2)
-                dice_kidneys = calculate_dice(pred_np[0], label_np[0], 3)
-                
-                iou_spleen = calculate_iou(pred_np[0], label_np[0], 1)
-                iou_liver = calculate_iou(pred_np[0], label_np[0], 2)
-                iou_kidneys = calculate_iou(pred_np[0], label_np[0], 3)
+                # For each class (1=spleen, 2=liver, 3=kidneys)
+                dice_spleen = None
+                dice_liver = None
+                dice_kidneys = None
+                iou_spleen = None
+                iou_liver = None
+                iou_kidneys = None
+                for class_idx, name in zip([1,2,3], ['spleen','liver','kidneys']):
+                    pred_mask = (pred_classes == class_idx)
+                    label_mask = (label_classes == class_idx)
+                    # Only compute if present in label
+                    if label_mask.sum() > 0:
+                        intersection = (pred_mask & label_mask).sum().float()
+                        union = pred_mask.sum() + label_mask.sum()
+                        dice = (2. * intersection + 1e-5) / (union + 1e-5)
+                        iou = (intersection + 1e-5) / (pred_mask.sum() + label_mask.sum() - intersection + 1e-5)
+                    else:
+                        dice = torch.tensor(0.0)
+                        iou = torch.tensor(0.0)
+                    if name == 'spleen':
+                        dice_spleen = dice.item()
+                        iou_spleen = iou.item()
+                    elif name == 'liver':
+                        dice_liver = dice.item()
+                        iou_liver = iou.item()
+                    elif name == 'kidneys':
+                        dice_kidneys = dice.item()
+                        iou_kidneys = iou.item()
                 
                 print(f"Metrics - Spleen: Dice={dice_spleen:.4f}, IoU={iou_spleen:.4f}")
                 print(f"Metrics - Liver: Dice={dice_liver:.4f}, IoU={iou_liver:.4f}")
@@ -303,6 +259,19 @@ def test_model(model, test_loader, accelerator, args):
                 metrics['iou_spleen'].append(iou_spleen)
                 metrics['iou_liver'].append(iou_liver)
                 metrics['iou_kidneys'].append(iou_kidneys)
+                
+                # Save visualization and NIfTI as before
+                pred_np = pred_classes.cpu().numpy()
+                label_np = label_classes.cpu().numpy()
+                image_np = image.cpu().numpy()
+                original_nifti_path = test_loader.dataset.samples[i]['image_path']
+                original_filename = os.path.splitext(os.path.basename(original_nifti_path))[0]
+                vis_path = os.path.join(visualizations_dir, f'{original_filename}_pred.png')
+                visualize_prediction(image_np[0, 0], label_np[0], pred_np[0], vis_path)
+                original_nifti = nib.load(original_nifti_path)
+                pred_nifti = nib.Nifti1Image(pred_np[0], affine=original_nifti.affine, header=original_nifti.header)
+                pred_nifti_path = os.path.join(predictions_dir, f'{original_filename}_pred.nii.gz')
+                nib.save(pred_nifti, pred_nifti_path)
                 
                 per_sample_metrics.append({
                     'filename': original_filename,
@@ -379,10 +348,11 @@ def main(args):
     test_dir = os.path.join(args.data_root, 'test')
     test_dataset = CombinedDataset(test_dir, transform=None, modalities=args.modalities)
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=2)
-    
     # Prepare model and data loader with accelerator
     model, test_loader = accelerator.prepare(model, test_loader)
     
+    print('test')
+
     # Run testing
     print(f"\n[TEST] 🧪 Starting Testing with model: {args.model_name}")
     test_model(model, test_loader, accelerator, args)

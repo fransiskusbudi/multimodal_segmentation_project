@@ -48,6 +48,8 @@ def run_finetune(args):
         '--dropout_rate', str(args.dropout_rate)
     ]
     
+    if args.n_samples is not None:
+        cmd.extend(['--n_samples', str(args.n_samples)])
     if args.seed is not None:
         cmd.extend(['--seed', str(args.seed)])
     
@@ -62,6 +64,9 @@ def run_finetune(args):
     
     if args.patience is not None:
         cmd.extend(['--patience', str(args.patience)])
+    
+    if args.n_samples is not None:
+        args.experiment_dir = os.path.join(args.experiment_dir, f"n{args.n_samples}_samples")
     
     subprocess.run(cmd)
 
@@ -97,6 +102,19 @@ def run_distill(args):
     ]
     if args.seed is not None:
         cmd.extend(['--seed', str(args.seed)])
+    
+    if args.early_stopping:
+        cmd.append('--early_stopping')
+    
+    if args.patience is not None:
+        cmd.extend(['--patience', str(args.patience)])
+    
+    if args.alpha is not None:
+        cmd.extend(['--alpha', str(args.alpha)])
+    
+    if args.temperature is not None:
+        cmd.extend(['--temperature', str(args.temperature)])
+    
     subprocess.run(cmd)
 
 def main():
@@ -160,12 +178,18 @@ def main():
     # Distillation specific arguments
     parser.add_argument('--teacher_model', type=str, default=None,
                        help='Path to teacher model checkpoint (required for distillation)')
+    parser.add_argument('--alpha', type=float, default=0.7,
+                       help='Weight for segmentation loss in distillation (default: 0.7)')
+    parser.add_argument('--temperature', type=float, default=4.0,
+                       help='Temperature for softening logits in distillation (default: 4.0)')
     
     parser.add_argument('--loss', type=str, default='combined',
         choices=['combined', 'ce', 'dice', 'tversky', 'ce_tversky'],
         help='Loss function to use for training')
     parser.add_argument('--dropout_rate', type=float, default=0.1,
         help='Dropout rate for regularization (default: 0.1)')
+    
+    parser.add_argument('--n_samples', type=int, default=None, help='Number of samples to use for ablation study')
     
     args = parser.parse_args()
 

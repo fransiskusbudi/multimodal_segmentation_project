@@ -9,9 +9,9 @@ import argparse
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from utils.dataloader import CombinedDataset, combined_transform
-from utils.metrics import calculate_metrics, combined_loss, calculate_iou, calculate_dice, calculate_accuracy
+from utils.metrics import calculate_metrics, combined_loss, calculate_iou, calculate_dice, calculate_accuracy, tversky_loss, combined_ce_tversky_loss
 from models.unet import UNet3D
 import numpy as np
 import csv
@@ -22,6 +22,8 @@ import matplotlib.pyplot as plt
 from accelerate import Accelerator
 from accelerate.utils import set_seed
 import subprocess
+import torch.nn.functional as F
+import json
 
 def format_time(seconds):
     return str(timedelta(seconds=int(seconds)))
@@ -29,10 +31,10 @@ def format_time(seconds):
 def create_finetune_experiment_name(args):
     """Create a unique experiment name for fine-tuning."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_model = os.path.basename(args.pretrained_model).split('.')[0]
+    base_model = os.path.basename(args.pretrained_model).split('.pth')[0]
     freeze_str = "frozen_enc" if args.freeze_encoder else "unfrozen_enc"
     param_str = f"ft_ct_bs{args.batch_size}_ep{args.epochs}_lr{args.lr}_wd{args.weight_decay}_{freeze_str}"
-    return f"finetune_{timestamp}_{base_model}"#_{param_str}"
+    return f"finetune_{timestamp}_{base_model}_samples_{args.n_samples}"#_{param_str}"
 
 def plot_finetune_metrics(log_file, save_dir):
     """Create and save plots of fine-tuning metrics."""
@@ -113,7 +115,35 @@ def log_gpu_usage(log_file="gpu_usage.log"):
         f.write(subprocess.getoutput("nvidia-smi"))
         f.write("\n" + "="*80 + "\n")
 
-def train_one_epoch(model, loader, optimizer, accelerator, epoch, args):
+def get_loss_fn(loss_type):
+    if loss_type == 'ce':
+        return nn.CrossEntropyLoss()
+    elif loss_type == 'tversky':
+        def loss_fn(pred, target):
+            return tversky_loss(pred, target, alpha=0.5, beta=0.5)
+        return loss_fn
+    elif loss_type == 'dice':
+        def loss_fn(pred, target):
+            target_ = target.squeeze(1)
+            pred_softmax = F.softmax(pred, dim=1)
+            dice = 0
+            for class_idx in range(1, pred_softmax.size(1)):
+                pred_mask = pred_softmax[:, class_idx]
+                target_mask = (target_ == class_idx).float()
+                intersection = (pred_mask * target_mask).sum()
+                union = pred_mask.sum() + target_mask.sum()
+                dice += 1 - (2. * intersection + 1e-5) / (union + 1e-5)
+            dice = dice / (pred_softmax.size(1) - 1)
+            return dice
+        return loss_fn
+    elif loss_type == 'ce_tversky':
+        def loss_fn(pred, target):
+            return combined_ce_tversky_loss(pred, target, alpha=0.5, beta=0.5)
+        return loss_fn
+    else:
+        return combined_loss
+
+def train_one_epoch(model, loader, optimizer, accelerator, epoch, args, loss_fn):
     model.train()
     running_loss, total_iou, total_dice, total_acc = 0, 0, 0, 0
     num_batches = len(loader)
@@ -130,7 +160,7 @@ def train_one_epoch(model, loader, optimizer, accelerator, epoch, args):
         with accelerator.accumulate(model):
             optimizer.zero_grad()
             outputs = model(images)
-            loss = combined_loss(outputs, labels)
+            loss = loss_fn(outputs, labels)
             accelerator.backward(loss)
             optimizer.step()
             
@@ -165,7 +195,7 @@ def train_one_epoch(model, loader, optimizer, accelerator, epoch, args):
             total_dice / num_batches,
             total_acc / num_batches)
 
-def evaluate(model, loader, accelerator, epoch, args):
+def evaluate(model, loader, accelerator, epoch, args, loss_fn):
     model.eval()
     running_loss, total_iou, total_dice, total_acc = 0, 0, 0, 0
     num_batches = len(loader)
@@ -181,7 +211,7 @@ def evaluate(model, loader, accelerator, epoch, args):
     with torch.no_grad():
         for i, (images, labels) in enumerate(progress_bar):
             outputs = model(images)
-            loss = combined_loss(outputs, labels)
+            loss = loss_fn(outputs, labels)
             
             # Calculate metrics
             iou = calculate_iou(outputs, labels)
@@ -322,10 +352,15 @@ def main(args):
     val_dir = os.path.join(args.data_root, 'val')
     test_dir = os.path.join(args.data_root, 'test')
 
-    train_dataset = CombinedDataset(train_dir, transform=combined_transform, modalities=args.modalities)
+    train_dataset = CombinedDataset(train_dir, transform=None, modalities=args.modalities)
     val_dataset = CombinedDataset(val_dir, modalities=args.modalities)
     test_dataset = CombinedDataset(test_dir, modalities=args.modalities)
 
+    # Single-run ablation: sample n_samples if specified
+    if args.n_samples is not None:
+        rng = np.random.default_rng(args.seed) if args.seed is not None else np.random.default_rng()
+        indices = rng.choice(len(train_dataset), size=args.n_samples, replace=False)
+        train_dataset = Subset(train_dataset, indices)
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2)
     val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=2)
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=2)
@@ -366,6 +401,8 @@ def main(args):
     patience_counter = 0
     early_stop = False
     
+    loss_fn = get_loss_fn(args.loss)
+    
     for epoch in range(args.epochs):
         if early_stop:
             break
@@ -389,10 +426,10 @@ def main(args):
                 encoder_frozen = False
         # Training
         train_loss, train_iou, train_dice, train_acc = train_one_epoch(
-            model, train_loader, optimizer, accelerator, epoch, args)
+            model, train_loader, optimizer, accelerator, epoch, args, loss_fn)
         # Validation
         val_loss, val_iou, val_dice, val_acc = evaluate(
-            model, val_loader, accelerator, epoch, args)
+            model, val_loader, accelerator, epoch, args, loss_fn)
         # Calculate epoch time
         epoch_time = time.time() - epoch_start_time
         # Log metrics only on main process
@@ -456,7 +493,6 @@ def main(args):
         total_time = time.time() - start_time
         print(f"\n[END] ✅ CT Fine-tuning completed in {format_time(total_time)}")
         print(f"Best validation Dice score: {best_val_dice:.4f}")
-        
         # Log final GPU usage
         log_gpu_usage(gpu_log_file)
 
@@ -478,6 +514,8 @@ if __name__ == "__main__":
     parser.add_argument('--early_stopping', action='store_true', help='Enable early stopping based on validation Dice')
     parser.add_argument('--patience', type=int, default=10, help='Number of epochs to wait for improvement before stopping (used if early stopping is enabled)')
     parser.add_argument('--dropout_rate', type=float, default=0.1, help='Dropout rate for regularization (default: 0.1)')
+    parser.add_argument('--n_samples', type=int, default=None, help='Number of samples to use for ablation study')
+    parser.add_argument('--loss', type=str, default='ce_tversky', choices=['combined', 'ce', 'dice', 'tversky', 'ce_tversky'], help='Loss function to use')
     
     args = parser.parse_args()
     
@@ -486,5 +524,7 @@ if __name__ == "__main__":
         args.modalities = None  # None means include all modalities
     else:
         args.modalities = [mod.strip().lower() for mod in args.modalities.split(',')]
+    
+    loss_fn = get_loss_fn(args.loss)
     
     main(args) 

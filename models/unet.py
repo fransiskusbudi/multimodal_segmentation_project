@@ -88,3 +88,17 @@ class UNet3D(nn.Module):
         if self.output_activation is not None:
             x = self.output_activation(x)
         return x
+
+    def get_bottleneck_features(self, x):
+        """
+        Extract bottleneck features for DANN domain adaptation.
+        Returns the bottleneck layer output without decoder processing.
+        """
+        # Encoder
+        for down in self.encoder:
+            x = down(x)
+            x = self.pool(x)
+        
+        # Bottleneck
+        bottleneck_features = self.bottleneck(x)
+        return bottleneck_features

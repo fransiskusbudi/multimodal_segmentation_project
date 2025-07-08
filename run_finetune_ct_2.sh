@@ -38,7 +38,7 @@ FREEZE_ENCODER=false  # Set to true to freeze encoder layers and prevent overfit
 # FREEZE_ENCODER_EPOCH=5  # Epoch to freeze encoder (set to null or comment out to disable)
 
 # Ablation parameters
-N_SAMPLES=50   # Set to 1, 25, or 100
+N_SAMPLES=1   # Set to 1, 25, or 100
 LOSS_FUNCTION="ce_tversky"  # Set to "combined", "ce", "dice", "tversky", or "ce_tversky"
 
 # Run fine-tuning with main.py orchestrator
@@ -56,7 +56,7 @@ echo "Loss function: $LOSS_FUNCTION"
 
 # Example ablation runs:
 # 1-sample ablation (or set N_SAMPLES as needed)
-accelerate launch --num_processes=2 --main_process_port 29503 main.py \
+accelerate launch --num_processes=2 --main_process_port 29502 main.py \
     --experiment finetune \
     --pretrained_model "$PRETRAINED_MODEL" \
     --data_root "$DATA_ROOT" \

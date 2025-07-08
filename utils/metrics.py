@@ -165,4 +165,27 @@ def combined_ce_tversky_loss(pred, target, alpha=0.7, beta=0.3):
     ce_loss = nn.CrossEntropyLoss()(pred, target_)
     tversky = tversky_loss(pred, target, alpha=alpha, beta=beta)
     return 0.3 * ce_loss + 0.7 * tversky
+
+def distillation_loss(student_logits, teacher_logits, target, alpha=0.7, temperature=2.0):
+    """
+    Distillation loss for knowledge distillation in segmentation.
+    Combines CE+Tversky loss with KL divergence between teacher and student outputs.
+    Args:
+        student_logits: Student model output logits (B, C, ...)
+        teacher_logits: Teacher model output logits (B, C, ...)
+        target: Ground truth labels (B, 1, ...)
+        alpha: Weight for segmentation loss (default 0.7)
+        temperature: Temperature for softening logits (default 2.0)
+    Returns:
+        Weighted sum of segmentation loss and KL divergence loss.
+    """
+    # Use CE+Tversky loss for segmentation
+    seg_loss = combined_ce_tversky_loss(student_logits, target)
+    # seg_loss = combined_loss(student_logits, target)
+    # KL divergence between teacher and student softmax outputs
+    student_soft = F.log_softmax(student_logits / temperature, dim=1)
+    teacher_soft = F.softmax(teacher_logits / temperature, dim=1)
+    kl_loss = F.kl_div(student_soft, teacher_soft, reduction='none')  # shape: (B, C, ...)
+    kl_loss = kl_loss.mean() * (temperature ** 2)  # average over all elements
+    return alpha * seg_loss + (1 - alpha) * kl_loss
  

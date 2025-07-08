@@ -38,7 +38,7 @@ MODALITIES='ct'  # Options: "ct", "mri", "ct,mri", "all"
 EARLY_STOPPING=false  # Set to true to enable early stopping
 PATIENCE=10  # Number of epochs to wait for improvement before stopping
 # Distillation loss parameters
-ALPHA=0.5  # Weight for segmentation loss in distillation
+ALPHA=0.0  # Weight for segmentation loss in distillation
 TEMPERATURE=2.0  # Temperature for softening logits in distillation
 # Add more distillation-specific options here if needed
 
@@ -60,7 +60,7 @@ echo "Temperature: $TEMPERATURE"
 
 echo "Launching distillation..."
 
-accelerate launch --num_processes=2 --main_process_port 29503 main.py \
+accelerate launch --num_processes=2 --main_process_port 29502 main.py \
     --experiment distill \
     --teacher_model "$TEACHER_MODEL" \
     --data_root "$DATA_ROOT" \
