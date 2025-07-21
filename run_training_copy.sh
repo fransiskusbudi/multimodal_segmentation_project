@@ -16,15 +16,20 @@ echo "I am job ${SLURM_JOB_ID}"
 echo "I'm running on ${SLURM_JOB_NODELIST}"
 echo "Job started at ${dt}"
 
+# SCRATCH_DISK=/disk/scratch
+# dest_path=${SCRATCH_DISK}/${USER}/multimodal_segmentation_project/
+
 # Default values
-DATA_ROOT="datasets/resampled"
+DATA_ROOT=/home/s2670828/multimodal_segmentation_project/datasets/resampled
 BATCH_SIZE=1  # Keep batch size per GPU the same
 EPOCHS=100
 LR=0.001
 EXPERIMENT_DIR="experiments"
 GRAD_ACCUM_STEPS=8  # Doubled gradient accumulation to compensate for fewer GPUs
-MODALITIES="mri"  # Default to all modalities; change as needed
+MODALITIES="ct"  # Default to all modalities; change as needed
 WEIGHT_DECAY=0.0001  # Default weight decay; change as needed
+DROPOUT_RATE=0.1  # Default dropout rate; change as needed
+N_SAMPLES=1  # Number of samples to use for training (first 100 samples)
 
 # Create directories if they don't exist
 mkdir -p $EXPERIMENT_DIR
@@ -34,8 +39,7 @@ mkdir -p $EXPERIMENT_DIR
 # ====================
 source /home/${USER}/miniconda3/bin/activate diss
 
-# SCRATCH_DISK=/disk/scratch
-# dest_path=${SCRATCH_DISK}/${USER}/multimodal_segmentation_project/
+
 
 
 # ====================
@@ -49,13 +53,17 @@ source /home/${USER}/miniconda3/bin/activate diss
 # fi
 
 # mkdir -p ${dest_path}
-# src_path=/home/${USER}/multimodal_segmentation_project/
-# rsync -azvP ${src_path} ${dest_path}
+# src_path="/home/${USER}/multimodal_segmentation_project/"
+# rsync -azvP \
+#   --exclude='experiments/' \
+#   --exclude='logs/' \
+#   --exclude='test_results/' \
+#   "${src_path}" "${dest_path}"
 
 # accelerate launch --num_processes=2 --main_process_port 29503 src/main.py --train
 
 # Run the training
-accelerate launch --num_processes=2 --main_process_port 29503 main.py \
+accelerate launch --num_processes=2 --main_process_port 29502 main.py \
     --experiment train \
     --data_root $DATA_ROOT \
     --batch_size $BATCH_SIZE \
@@ -67,8 +75,10 @@ accelerate launch --num_processes=2 --main_process_port 29503 main.py \
     --mixed_precision fp16 \
     --loss ce_tversky \
     --modalities $MODALITIES \
-    --early_stopping \
-    --patience 25 \
+    --dropout_rate $DROPOUT_RATE \
+    --n_samples $N_SAMPLES \
+    # --early_stopping \
+    # --patience 25 \
 
 # echo "Deleting scratch disk path: ${dest_path}"
 # rm -rf ${dest_path}

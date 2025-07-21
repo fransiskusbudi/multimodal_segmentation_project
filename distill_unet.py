@@ -197,14 +197,16 @@ def main(args):
     train_dir = os.path.join(args.data_root, 'train')
     val_dir = os.path.join(args.data_root, 'val')
     train_dataset = CombinedDataset(train_dir, modalities=args.modalities)
-    # Subsample to first 100 samples (not random)
-    indices = list(range(min(100, len(train_dataset))))
-    train_dataset = Subset(train_dataset, indices)
-    
-    # Alternative: Subsample to 100 random samples (commented out)
-    # rng = np.random.default_rng(args.seed) if args.seed is not None else np.random.default_rng()
-    # indices = rng.choice(len(train_dataset), size=100, replace=False)
+    # # Subsample to first 100 samples (not random)
+    # indices = list(range(min(50, len(train_dataset))))
     # train_dataset = Subset(train_dataset, indices)
+    # Subsample if specified
+    if args.n_samples is not None:
+        rng = np.random.default_rng(args.seed) if args.seed is not None else np.random.default_rng()
+        indices = rng.choice(len(train_dataset), size=args.n_samples, replace=False)
+        train_dataset = Subset(train_dataset, indices)
+        if accelerator.is_main_process:
+            print(f"[INFO] 🔢 Limited training dataset to {len(train_dataset)} random samples")
     val_dataset = CombinedDataset(val_dir, modalities=args.modalities)
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2)
     val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=2)
@@ -284,6 +286,7 @@ def parse_args():
     parser.add_argument('--patience', type=int, default=10, help='Number of epochs to wait for improvement before stopping (used if early stopping is enabled)')
     parser.add_argument('--alpha', type=float, default=0.7, help='Weight for segmentation loss in distillation (default: 0.7)')
     parser.add_argument('--temperature', type=float, default=4.0, help='Temperature for softening logits in distillation (default: 4.0)')
+    parser.add_argument('--n_samples', type=int, default=None, help='Number of samples to use for training (uses first n samples)')
     return parser.parse_args()
 
 if __name__ == "__main__":

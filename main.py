@@ -21,6 +21,9 @@ def run_baseline(args):
         '--dropout_rate', str(args.dropout_rate)
     ]
     
+    if args.n_samples is not None:
+        cmd.extend(['--n_samples', str(args.n_samples)])
+    
     if args.seed is not None:
         cmd.extend(['--seed', str(args.seed)])
     
@@ -100,6 +103,10 @@ def run_distill(args):
         '--modalities', args.modalities,
         '--dropout_rate', str(args.dropout_rate)
     ]
+    
+    if args.n_samples is not None:
+        cmd.extend(['--n_samples', str(args.n_samples)])
+    
     if args.seed is not None:
         cmd.extend(['--seed', str(args.seed)])
     
@@ -115,6 +122,45 @@ def run_distill(args):
     if args.temperature is not None:
         cmd.extend(['--temperature', str(args.temperature)])
     
+    # # Modify experiment directory to include sample count for ablation studies
+    # if args.n_samples is not None:
+    #     args.experiment_dir = os.path.join(args.experiment_dir, f"n{args.n_samples}_samples_distill")
+    
+    subprocess.run(cmd)
+
+def run_dann(args):
+    cmd = [
+        sys.executable, 'train_dann.py',
+        '--source_modality', args.source_modality,
+        '--target_modality', args.target_modality,
+        '--data_root', args.data_root,
+        '--experiment_dir', args.experiment_dir,
+        '--batch_size', str(args.batch_size),
+        '--epochs', str(args.epochs),
+        '--lr', str(args.lr),
+        '--weight_decay', str(args.weight_decay),
+        '--lambda_domain', str(args.lambda_domain),
+        '--gradient_accumulation_steps', str(args.gradient_accumulation_steps),
+        '--mixed_precision', args.mixed_precision,
+        '--dropout_rate', str(args.dropout_rate),
+    ]
+    if args.pretrained_model is not None:
+        cmd.extend(['--pretrained_model', args.pretrained_model])
+    if args.seed is not None:
+        cmd.extend(['--seed', str(args.seed)])
+    if args.n_samples is not None:
+        cmd.extend(['--n_samples', str(args.n_samples)])
+    if args.freeze_encoder_epoch is not None:
+        cmd.extend(['--freeze_encoder_epoch', str(args.freeze_encoder_epoch)])
+    if args.early_stopping:
+        cmd.append('--early_stopping')
+    if args.patience is not None:
+        cmd.extend(['--patience', str(args.patience)])
+    # Forward n_add_source and n_target if set
+    if args.n_add_source is not None:
+        cmd.extend(['--n_add_source', str(args.n_add_source)])
+    if args.n_target is not None:
+        cmd.extend(['--n_target', str(args.n_target)])
     subprocess.run(cmd)
 
 def main():
@@ -190,6 +236,12 @@ def main():
         help='Dropout rate for regularization (default: 0.1)')
     
     parser.add_argument('--n_samples', type=int, default=None, help='Number of samples to use for ablation study')
+    parser.add_argument('--n_add_source', type=int, default=None, help='Number of additional source volumes from add/')
+    parser.add_argument('--n_target', type=int, default=None, help='Number of target volumes from target/')
+    
+    parser.add_argument('--source_modality', type=str, default=None, help='Source modality for DANN experiments')
+    parser.add_argument('--target_modality', type=str, default=None, help='Target modality for DANN experiments')
+    parser.add_argument('--lambda_domain', type=float, default=0.1, help='Weight for domain loss in DANN experiments')
     
     args = parser.parse_args()
 
@@ -205,8 +257,7 @@ def main():
         # TODO: Implement transfer learning script call
         print("Transfer learning not implemented yet.")
     elif args.experiment == 'dann':
-        # TODO: Implement DANN script call
-        print("DANN not implemented yet.")
+        run_dann(args)
     elif args.experiment == 'distill':
         if args.teacher_model is None:
             raise ValueError("--teacher_model is required for distillation experiments")

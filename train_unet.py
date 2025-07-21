@@ -3,7 +3,7 @@ import argparse
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from utils.dataloader import CombinedDataset, combined_transform
 from utils.metrics import calculate_metrics, combined_loss, calculate_iou, calculate_dice, calculate_accuracy, tversky_loss, combined_ce_tversky_loss
 from models.unet import UNet3D
@@ -361,6 +361,13 @@ def main(args):
     train_dataset = CombinedDataset(train_dir, transform=combined_transform(), modalities=args.modalities)
     val_dataset = CombinedDataset(val_dir, modalities=args.modalities)
     test_dataset = CombinedDataset(test_dir, modalities=args.modalities)
+    
+    if args.n_samples is not None:
+        rng = np.random.default_rng(args.seed) if args.seed is not None else np.random.default_rng()
+        indices = rng.choice(len(train_dataset), size=args.n_samples, replace=False)
+        train_dataset = Subset(train_dataset, indices)
+        if accelerator.is_main_process:
+            print(f"[INFO] 🔢 Limited training dataset to {len(train_dataset)} random samples")
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2)
     val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=2)
@@ -530,6 +537,7 @@ if __name__ == "__main__":
     parser.add_argument('--patience', type=int, default=10, help='Number of epochs to wait for improvement before stopping (used if early stopping is enabled)')
     parser.add_argument('--loss', type=str, default='combined', choices=['combined', 'ce', 'dice', 'tversky', 'ce_tversky'], help='Loss function to use')
     parser.add_argument('--dropout_rate', type=float, default=0.1, help='Dropout rate for regularization (default: 0.1)')
+    parser.add_argument('--n_samples', type=int, default=None, help='Number of samples to use for training (uses first n samples)')
     
     args = parser.parse_args()
 

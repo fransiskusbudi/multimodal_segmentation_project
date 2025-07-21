@@ -60,26 +60,31 @@ class UNet3D(nn.Module):
         
         # Final output layer
         self.final_conv = nn.Conv3d(features[0], out_channels, kernel_size=1)
+    
         
-    def forward(self, x):
+    def forward(self, x, return_features=False):
         skip_connections = []
-        
-        # Encoder
+        # Encoder path
         for down in self.encoder:
             x = down(x)
             skip_connections.append(x)
             x = self.pool(x)
         
         # Bottleneck
-        x = self.bottleneck(x)
+        bottleneck = self.bottleneck(x)
         
-        # Decoder
+        # Add global average pooling here
+        if return_features:
+            # [batch, channels, depth, height, width] -> [batch, channels]
+            bottleneck_gap = torch.mean(bottleneck, dim=[2, 3, 4])
+        
+        # Decoder path
+        x = bottleneck
         skip_connections = skip_connections[::-1]
         for idx in range(len(self.upconvs)):
             x = self.upconvs[idx](x)
             skip_connection = skip_connections[idx]
             if x.shape != skip_connection.shape:
-                # Fix size mismatch due to rounding
                 x = nn.functional.interpolate(x, size=skip_connection.shape[2:])
             x = torch.cat((skip_connection, x), dim=1)
             x = self.decoder[idx](x)
@@ -87,4 +92,7 @@ class UNet3D(nn.Module):
         x = self.final_conv(x)
         if self.output_activation is not None:
             x = self.output_activation(x)
-        return x
+        
+        if return_features:
+            return x, bottleneck_gap  # Return pooled features
+        return x, None

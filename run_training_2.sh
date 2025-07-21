@@ -26,9 +26,10 @@ EPOCHS=100
 LR=0.001
 EXPERIMENT_DIR="experiments"
 GRAD_ACCUM_STEPS=8  # Doubled gradient accumulation to compensate for fewer GPUs
-MODALITIES="mri"  # Default to all modalities; change as needed
+MODALITIES="ct"  # Default to all modalities; change as needed
 WEIGHT_DECAY=0.0001  # Default weight decay; change as needed
 DROPOUT_RATE=0.1  # Default dropout rate; change as needed
+N_SAMPLES=5  # Number of samples to use for training (first 100 samples)
 
 # Create directories if they don't exist
 mkdir -p $EXPERIMENT_DIR
@@ -75,8 +76,9 @@ accelerate launch --num_processes=2 --main_process_port 29502 main.py \
     --loss ce_tversky \
     --modalities $MODALITIES \
     --dropout_rate $DROPOUT_RATE \
-    --early_stopping \
-    --patience 25 \
+    --n_samples $N_SAMPLES \
+    # --early_stopping \
+    # --patience 25 \
 
 # echo "Deleting scratch disk path: ${dest_path}"
 # rm -rf ${dest_path}

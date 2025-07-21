@@ -1,14 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name=distill_unet
-#SBATCH --output=logs/distill_unet_%j.out
-#SBATCH --error=logs/distill_unet_%j.err
-#SBATCH --time=24:00:00
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
-#SBATCH --gres=gpu:2
-#SBATCH --partition=gpu
+#SBATCH -o /home/%u/slogs/sl_%A.out
+#SBATCH -e /home/%u/slogs/sl_%A.out
+#SBATCH -N 1	  # nodes requested
+#SBATCH -n 1	  # tasks requested
+#SBATCH --gres=gpu:2  # use 2 GPUs
+#SBATCH --mem=14000  # memory in Mb
+#SBATCH --partition=PGR-Standard
+#SBATCH -t 12:00:00  # time requested in hour:minute:seconds
+#SBATCH --cpus-per-task=4  # number of cpus to use - there are 32 on each node.
 
 # Load modules
 # module load cuda/11.8
@@ -30,7 +29,7 @@ DATA_ROOT="/home/s2670828/multimodal_segmentation_project/datasets/resampled"  #
 EXPERIMENT_DIR="experiments"
 BATCH_SIZE=1
 EPOCHS=100
-LEARNING_RATE=0.0001
+LEARNING_RATE=0.001
 WEIGHT_DECAY=0.0001
 SEED=42
 MODALITIES='ct'  # Options: "ct", "mri", "ct,mri", "all"
@@ -38,8 +37,10 @@ MODALITIES='ct'  # Options: "ct", "mri", "ct,mri", "all"
 EARLY_STOPPING=false  # Set to true to enable early stopping
 PATIENCE=10  # Number of epochs to wait for improvement before stopping
 # Distillation loss parameters
-ALPHA=0.5  # Weight for segmentation loss in distillation
+ALPHA=0.7  # Weight for segmentation loss in distillation
 TEMPERATURE=2.0  # Temperature for softening logits in distillation
+# Ablation study parameters
+N_SAMPLES=  # Number of samples to use for training (set to None to use all samples)
 # Add more distillation-specific options here if needed
 
 # Run distillation with main.py orchestrator
@@ -57,6 +58,7 @@ echo "Early stopping: $EARLY_STOPPING"
 echo "Patience: $PATIENCE"
 echo "Alpha: $ALPHA"
 echo "Temperature: $TEMPERATURE"
+echo "Number of samples: $N_SAMPLES"
 
 echo "Launching distillation..."
 
@@ -64,7 +66,7 @@ accelerate launch --num_processes=2 --main_process_port 29503 main.py \
     --experiment distill \
     --teacher_model "$TEACHER_MODEL" \
     --data_root "$DATA_ROOT" \
-    --experiment_dir "$EXPERIMENT_DIR" \
+    --experiment_dir "$EXPERIMENT_DIR/n${N_SAMPLES}_samples_distill" \
     --batch_size $BATCH_SIZE \
     --epochs $EPOCHS \
     --lr $LEARNING_RATE \
@@ -75,6 +77,7 @@ accelerate launch --num_processes=2 --main_process_port 29503 main.py \
     --mixed_precision fp16 \
     --alpha $ALPHA \
     --temperature $TEMPERATURE \
+    --n_samples $N_SAMPLES \
     # --early_stopping \
     # --patience $PATIENCE \
 

@@ -29,6 +29,7 @@ GRAD_ACCUM_STEPS=8  # Doubled gradient accumulation to compensate for fewer GPUs
 MODALITIES="mri"  # Default to all modalities; change as needed
 WEIGHT_DECAY=0.0001  # Default weight decay; change as needed
 DROPOUT_RATE=0.0  # Default dropout rate; change as needed
+N_SAMPLES=100
 
 # Create directories if they don't exist
 mkdir -p $EXPERIMENT_DIR
@@ -75,6 +76,7 @@ accelerate launch --num_processes=2 --main_process_port 29503 main.py \
     --loss ce_tversky \
     --modalities $MODALITIES \
     --dropout_rate $DROPOUT_RATE \
+    --n_samples $N_SAMPLES \
     --early_stopping \
     --patience 25 \
 
