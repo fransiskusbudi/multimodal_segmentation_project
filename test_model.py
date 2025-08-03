@@ -13,6 +13,7 @@ from datetime import datetime
 from utils.metrics import calculate_dice as torch_calculate_dice, calculate_iou as torch_calculate_iou
 import json
 import csv
+import time
 
 def load_model(model_path, device):
     """Load the trained model."""
@@ -97,55 +98,55 @@ def visualize_prediction(image, label, pred, save_path):
     
     # Axial view (top row)
     # Original
-    axes[0,0].imshow(image[:, :, axial_slice], cmap='gray')
+    axes[0,0].imshow(np.rot90(image[:, :, axial_slice]), cmap='gray')
     axes[0,0].set_title('Axial - Original', pad=20)
     axes[0,0].axis('off')
     
     # Ground truth
     gt_overlay = create_overlay(image[:, :, axial_slice], label[:, :, axial_slice])
-    axes[0,1].imshow(gt_overlay)
+    axes[0,1].imshow(np.rot90(gt_overlay))
     axes[0,1].set_title('Axial - Ground Truth', pad=20)
     axes[0,1].axis('off')
     
     # Prediction
     pred_overlay = create_overlay(image[:, :, axial_slice], pred[:, :, axial_slice])
-    axes[0,2].imshow(pred_overlay)
+    axes[0,2].imshow(np.rot90(pred_overlay))
     axes[0,2].set_title('Axial - Prediction', pad=20)
     axes[0,2].axis('off')
     
     # Sagittal view (middle row)
     # Original
-    axes[1,0].imshow(image[sagittal_slice, :, :], cmap='gray')
+    axes[1,0].imshow(np.rot90(image[sagittal_slice, :, :]), cmap='gray')
     axes[1,0].set_title('Sagittal - Original', pad=20)
     axes[1,0].axis('off')
     
     # Ground truth
     gt_overlay = create_overlay(image[sagittal_slice, :, :], label[sagittal_slice, :, :])
-    axes[1,1].imshow(gt_overlay)
+    axes[1,1].imshow(np.rot90(gt_overlay))
     axes[1,1].set_title('Sagittal - Ground Truth', pad=20)
     axes[1,1].axis('off')
     
     # Prediction
     pred_overlay = create_overlay(image[sagittal_slice, :, :], pred[sagittal_slice, :, :])
-    axes[1,2].imshow(pred_overlay)
+    axes[1,2].imshow(np.rot90(pred_overlay))
     axes[1,2].set_title('Sagittal - Prediction', pad=20)
     axes[1,2].axis('off')
     
     # Coronal view (bottom row)
     # Original
-    axes[2,0].imshow(image[:, coronal_slice, :], cmap='gray')
+    axes[2,0].imshow(np.rot90(image[:, coronal_slice, :]), cmap='gray')
     axes[2,0].set_title('Coronal - Original', pad=20)
     axes[2,0].axis('off')
     
     # Ground truth
     gt_overlay = create_overlay(image[:, coronal_slice, :], label[:, coronal_slice, :])
-    axes[2,1].imshow(gt_overlay)
+    axes[2,1].imshow(np.rot90(gt_overlay))
     axes[2,1].set_title('Coronal - Ground Truth', pad=20)
     axes[2,1].axis('off')
     
     # Prediction
     pred_overlay = create_overlay(image[:, coronal_slice, :], pred[:, coronal_slice, :])
-    axes[2,2].imshow(pred_overlay)
+    axes[2,2].imshow(np.rot90(pred_overlay))
     axes[2,2].set_title('Coronal - Prediction', pad=20)
     axes[2,2].axis('off')
     
@@ -210,11 +211,16 @@ def test_model(model, test_loader, accelerator, args):
     per_sample_metrics = []  # For CSV
     
     with torch.no_grad():
+        total_inference_time = 0.0
         for i, (image, label) in enumerate(tqdm(test_loader, desc="Testing")):
             try:
                 print(f"\nProcessing sample {i+1}/{len(test_loader)}")
-                
+                start_time = time.time()
                 outputs = model(image)
+                inference_time = time.time() - start_time
+                print(f"Inference time: {inference_time:.4f} seconds")
+                total_inference_time += inference_time
+                
                 # outputs: (B, C, ...), label: (B, 1, ...)
                 # For per-class metrics, use torch logic as in metrics.py
                 pred_classes = torch.argmax(outputs, dim=1)  # (B, ...)
@@ -280,7 +286,8 @@ def test_model(model, test_loader, accelerator, args):
                     'dice_kidneys': dice_kidneys,
                     'iou_spleen': iou_spleen,
                     'iou_liver': iou_liver,
-                    'iou_kidneys': iou_kidneys
+                    'iou_kidneys': iou_kidneys,
+                    'inference_time': inference_time
                 })
                 
                 all_predictions.append(pred_np)
@@ -298,7 +305,7 @@ def test_model(model, test_loader, accelerator, args):
     csv_path = os.path.join(metrics_dir, 'per_sample_metrics.csv')
     with open(csv_path, 'w', newline='') as csvfile:
         fieldnames = ['filename', 'dice_spleen', 'dice_liver', 'dice_kidneys', 
-                     'iou_spleen', 'iou_liver', 'iou_kidneys']
+                     'iou_spleen', 'iou_liver', 'iou_kidneys', 'inference_time']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
         for row in per_sample_metrics:
@@ -318,7 +325,8 @@ def test_model(model, test_loader, accelerator, args):
                                      np.mean(metrics['dice_kidneys'])]),
         'mean_iou_overall': np.mean([np.mean(metrics['iou_spleen']), 
                                     np.mean(metrics['iou_liver']), 
-                                    np.mean(metrics['iou_kidneys'])])
+                                    np.mean(metrics['iou_kidneys'])]),
+        'total_inference_time': total_inference_time
     }
     
     with open(os.path.join(metrics_dir, 'metrics.json'), 'w') as f:

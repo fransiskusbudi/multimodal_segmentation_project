@@ -32,7 +32,7 @@ class UNet3D(nn.Module):
         dropout_rate (float): Dropout rate for regularization (default: 0.1).
     """
     def __init__(self, in_channels=1, out_channels=1, 
-                features=[16, 32, 64, 128],  
+                features=[16, 32, 64, 128],   
                 #features=[32, 64, 128, 256], 
                  output_activation=None, dropout_rate=0.1):
         super(UNet3D, self).__init__()

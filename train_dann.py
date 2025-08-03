@@ -54,7 +54,7 @@ def format_time(seconds):
 
 def create_experiment_name(args):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    param_str = f"bs{args.batch_size}_ep{args.epochs}_lr{args.lr}_wd{args.weight_decay}_ld{args.lambda_domain}"
+    param_str = f"bs{args.batch_size}_ep{args.epochs}_lr{args.lr}_wd{args.weight_decay}_ld{args.lambda_domain}_add{args.n_add_source}_ns{args.n_samples}"
     return f"dann_{timestamp}_{param_str}"
 
 def get_loss_fn(loss_type):
@@ -360,39 +360,46 @@ def main(args):
     source_modalities = None if args.source_modality.lower() == 'all' else [args.source_modality]
     target_modalities = None if args.target_modality.lower() == 'all' else [args.target_modality]
 
-    # Create datasets from train, add, and target directories
+    # Create datasets from train, dann_add_labeled, dann_add_unlabeled, and target directories
     train_source_main = CombinedDataset(os.path.join(args.data_root, 'train'), modalities=source_modalities, transform=None)
-    train_source_add = CombinedDataset(os.path.join(args.data_root, 'add'), modalities=source_modalities, transform=None)
+    dann_add_labeled = CombinedDataset(os.path.join(args.data_root, 'dann_add_labeled'), modalities=target_modalities, transform=None)
     val_source = CombinedDataset(os.path.join(args.data_root, 'val'), modalities=target_modalities, transform=None)
-    # Target dataset: only from target folder
-    train_target = CombinedDataset(os.path.join(args.data_root, 'target'), modalities=target_modalities, transform=None)
-    if args.n_target is not None and args.n_target < len(train_target):
+    train_target_main = CombinedDataset(os.path.join(args.data_root, 'target'), modalities=target_modalities, transform=None)
+    dann_add_unlabeled = CombinedDataset(os.path.join(args.data_root, 'dann_add_unlabeled'), modalities=target_modalities, transform=None)
+
+    # Select n_add_source samples from dann_add_labeled and dann_add_unlabeled if specified
+    if args.n_add_source is not None and args.n_add_source < len(dann_add_labeled):
         rng = np.random.default_rng(args.seed) if args.seed is not None else np.random.default_rng()
-        indices = rng.choice(len(train_target), args.n_target, replace=False)
+        indices = rng.choice(len(dann_add_labeled), args.n_add_source, replace=False)
+        dann_add_labeled = Subset(dann_add_labeled, indices)
+    if args.n_add_source is not None and args.n_add_source < len(dann_add_unlabeled):
+        rng = np.random.default_rng(args.seed) if args.seed is not None else np.random.default_rng()
+        indices = rng.choice(len(dann_add_unlabeled), args.n_add_source, replace=False)
+        dann_add_unlabeled = Subset(dann_add_unlabeled, indices)
+
+    # Combine train_source_main and dann_add_labeled for the source set
+    train_source = ConcatDataset([train_source_main, dann_add_labeled])
+    # Combine train_target_main and dann_add_unlabeled for the target set
+    train_target = ConcatDataset([train_target_main, dann_add_unlabeled])
+
+    # Apply n_samples ablation if specified (to both train_source and train_target)
+    if args.n_samples is not None:
+        rng = np.random.default_rng(args.seed) if args.seed is not None else np.random.default_rng()
+        indices = rng.choice(len(train_source), min(args.n_samples, len(train_source)), replace=False)
+        train_source = Subset(train_source, indices)
+        indices = rng.choice(len(train_target), min(args.n_samples, len(train_target)), replace=False)
         train_target = Subset(train_target, indices)
 
-    # Select n_add_source samples if specified
-    if args.n_add_source is not None and args.n_add_source < len(train_source_add):
-        rng = np.random.default_rng(args.seed) if args.seed is not None else np.random.default_rng()
-        indices = rng.choice(len(train_source_add), args.n_add_source, replace=False)
-        train_source_add = Subset(train_source_add, indices)
-
-    train_source = ConcatDataset([train_source_main, train_source_add])
-
     # Print dataset info
-    print(f"[INFO] Source (train): {len(train_source_main)} from train/ + {len(train_source_add)} from add/ = {len(train_source)} total")
-    print(f"[INFO] Target (train): {len(train_target)} from target/")
+    print(f"[INFO] Source (train): {len(train_source_main)} from train/ + {len(dann_add_labeled)} from dann_add_labeled/ = {len(train_source)} total")
+    print(f"[INFO] Target (train): {len(train_target_main)} from target/ + {len(dann_add_unlabeled)} from dann_add_unlabeled/ = {len(train_target)} total")
     print(f"[INFO] Validation: {len(val_source)} from val/")
 
-    # Ablation support
-    if args.n_samples is not None:
-        indices = list(range(min(args.n_samples, len(train_source))))
-        train_source = torch.utils.data.Subset(train_source, indices)
-        indices = list(range(min(args.n_samples, len(train_target))))
-        train_target = torch.utils.data.Subset(train_target, indices)
+    # Create DataLoaders
     source_loader = DataLoader(train_source, batch_size=args.batch_size, shuffle=True, num_workers=2)
     target_loader = DataLoader(train_target, batch_size=args.batch_size, shuffle=True, num_workers=2)
     val_loader = DataLoader(val_source, batch_size=1, shuffle=False, num_workers=2)
+
     # Model
     seg_model = UNet3D(in_channels=1, out_channels=4, dropout_rate=args.dropout_rate).to(device)
     # Load pretrained weights if provided
@@ -414,7 +421,7 @@ def main(args):
     optim_seg = optim.AdamW(seg_model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     optim_disc = optim.AdamW(disc_model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     # Scheduler
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optim_seg, mode='max', patience=10, factor=0.1, min_lr=1e-6, verbose=True)
+    # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optim_seg, mode='max', patience=10, factor=0.1, min_lr=1e-6, verbose=True)
     # Logging
     log_file = os.path.join(log_dir, 'train_log.csv')
     with open(log_file, 'w', newline='') as f:
@@ -448,7 +455,7 @@ def main(args):
             seg_model, disc_model, (source_loader, target_loader), optim_seg, optim_disc, device, epoch, args, loss_fn, args.lambda_domain, scaler=scaler, use_fp16=use_fp16)
         # Validation (source domain)
         val_loss, val_iou, val_dice, val_acc = evaluate(seg_model, val_loader, device, epoch, args, loss_fn)
-        scheduler.step(val_dice)
+        # scheduler.step(val_dice)
         # Log learning rate
         current_lr = optim_seg.param_groups[0]['lr']
         print(f"[LR] Learning rate after epoch {epoch+1}: {current_lr}")
@@ -530,8 +537,7 @@ if __name__ == "__main__":
     parser.add_argument('--early_stopping', action='store_true', help='Enable early stopping based on validation Dice')
     parser.add_argument('--patience', type=int, default=10, help='Number of epochs to wait for improvement before stopping (used if early stopping is enabled)')
     parser.add_argument('--n_samples', type=int, default=None, help='Number of samples to use for ablation study')
-    parser.add_argument('--n_add_source', type=int, default=None, help='Number of additional source volumes from add/')
-    parser.add_argument('--n_target', type=int, default=None, help='Number of target volumes from target/')
+    parser.add_argument('--n_add_source', type=int, default=None, help='Number of additional source volumes from dann_add_labeled/ and dann_add_unlabeled/')
     parser.add_argument('--pretrained_model', type=str, default=None, help='Path to pretrained model checkpoint for seg_model')
     args = parser.parse_args()
     main(args)

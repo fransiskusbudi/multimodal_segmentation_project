@@ -26,10 +26,10 @@ EPOCHS=100
 LR=0.001
 EXPERIMENT_DIR="experiments"
 GRAD_ACCUM_STEPS=8  # Doubled gradient accumulation to compensate for fewer GPUs
-MODALITIES="ct"  # Default to all modalities; change as needed
+MODALITIES="mri"  # Default to all modalities; change as needed
 WEIGHT_DECAY=0.0001  # Default weight decay; change as needed
 DROPOUT_RATE=0.1  # Default dropout rate; change as needed
-N_SAMPLES=1  # Number of samples to use for training (first 100 samples)
+N_SAMPLES=100  # Number of samples to use for training (first 100 samples)
 
 # Create directories if they don't exist
 mkdir -p $EXPERIMENT_DIR

@@ -210,7 +210,7 @@ def main():
                        help='Name of the model for result folder (required for evaluation)')
     
     # Accelerate specific arguments
-    parser.add_argument('--seed', type=int, default=None,
+    parser.add_argument('--seed', type=int, default=42,
                        help='Random seed for reproducibility')
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1,
                        help='Number of steps to accumulate gradients')

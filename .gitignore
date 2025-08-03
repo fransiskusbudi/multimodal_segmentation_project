@@ -41,6 +41,7 @@ wheels/
 .vscode/
 *.swp
 *.swo
+*.sh
 
 # OS
 .DS_Store

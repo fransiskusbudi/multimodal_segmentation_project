@@ -1,14 +1,14 @@
 #!/bin/bash
-#SBATCH --job-name=distill_unet
-#SBATCH --output=logs/distill_unet_%j.out
-#SBATCH --error=logs/distill_unet_%j.err
-#SBATCH --time=24:00:00
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
-#SBATCH --gres=gpu:2
-#SBATCH --partition=gpu
+#SBATCH -o /home/%u/slogs/sl_%A.out
+#SBATCH -e /home/%u/slogs/sl_%A.out
+#SBATCH -N 1	  # nodes requested
+#SBATCH -n 1	  # tasks requested
+#SBATCH --gres=gpu:2  # use 2 GPUs
+#SBATCH --mem=14000  # memory in Mb
+#SBATCH --partition=PGR-Standard-Noble
+#SBATCH -t 12:00:00  # time requested in hour:minute:seconds
+#SBATCH --cpus-per-task=4  # number of cpus to use - there are 32 on each node.
+#SBATCH --nodelist=damnii12
 
 # Load modules
 # module load cuda/11.8

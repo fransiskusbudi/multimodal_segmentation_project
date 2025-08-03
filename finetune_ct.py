@@ -505,7 +505,7 @@ if __name__ == "__main__":
     parser.add_argument('--epochs', type=int, default=50, help='Number of epochs for fine-tuning')
     parser.add_argument('--lr', type=float, default=0.0001, help='Learning rate for fine-tuning')
     parser.add_argument('--weight_decay', type=float, default=0.01, help='Weight decay for AdamW optimizer')
-    parser.add_argument('--seed', type=int, default=None, help='Random seed for reproducibility')
+    parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
     parser.add_argument('--modalities', type=str, default='ct', help='Comma-separated list of modalities to include')
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1, help='Number of steps to accumulate gradients')
     parser.add_argument('--mixed_precision', type=str, default='no', choices=['no', 'fp16', 'bf16'], help='Mixed precision training')
