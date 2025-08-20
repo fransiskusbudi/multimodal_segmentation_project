@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH -o /home/%u/slogs/sl_%A.out
 #SBATCH -e /home/%u/slogs/sl_%A.out
-#SBATCH -N 1	  # nodes requested
-#SBATCH -n 1	  # tasks requested
-#SBATCH --gres=gpu:2  # use 2 GPUs
+#SBATCH -N 1    # nodes requested
+#SBATCH -n 1    # tasks requested
+#SBATCH --gres=gpu:1  # use 2 GPUs
 #SBATCH --mem=14000  # memory in Mb
 #SBATCH --partition=PGR-Standard-Noble
 #SBATCH -t 12:00:00  # time requested in hour:minute:seconds
@@ -21,16 +21,22 @@ echo "Job started at ${dt}"
 # dest_path=${SCRATCH_DISK}/${USER}/multimodal_segmentation_project/
 
 # Default values
-DATA_ROOT=/home/s2670828/multimodal_segmentation_project/datasets/resampled
+DATA_ROOT=/home/s2670828/multimodal_segmentation_project/datasets/resampled #${dest_path}/datasets/resampled
 BATCH_SIZE=1  # Keep batch size per GPU the same
 EPOCHS=100
-LR=0.001
+LR=0.001  # Reduced learning rate further
 EXPERIMENT_DIR="experiments"
 GRAD_ACCUM_STEPS=8  # Doubled gradient accumulation to compensate for fewer GPUs
-MODALITIES="mri"  # Default to all modalities; change as needed
 WEIGHT_DECAY=0.0001  # Default weight decay; change as needed
 DROPOUT_RATE=0.1  # Default dropout rate; change as needed
-N_SAMPLES=100  # Number of samples to use for training (first 100 samples)
+LAMBDA_DOMAIN=0.2  # Reduced further to prevent NaN errors
+SOURCE_MODALITY="mri"
+TARGET_MODALITY="ct"
+N_SAMPLES=50
+N_ADD_SOURCE=0  # Number of additional source volumes from add/
+
+# Pre-trained model path
+PRETRAINED_MODEL="experiments/exp_20250801_002447_bs1_ep100_lr0.001_wd0.0001_baseline_mri/checkpoints/best_model_exp_20250801_002447_bs1_ep100_lr0.001_wd0.0001.pth"
 
 # Create directories if they don't exist
 mkdir -p $EXPERIMENT_DIR
@@ -39,9 +45,6 @@ mkdir -p $EXPERIMENT_DIR
 # Activate Anaconda environment
 # ====================
 source /home/${USER}/miniconda3/bin/activate diss
-
-
-
 
 # ====================
 # Clean up scratch space
@@ -61,11 +64,11 @@ source /home/${USER}/miniconda3/bin/activate diss
 #   --exclude='test_results/' \
 #   "${src_path}" "${dest_path}"
 
-# accelerate launch --num_processes=2 --main_process_port 29503 src/main.py --train
-
-# Run the training
-accelerate launch --num_processes=2 --main_process_port 29502 main.py \
-    --experiment train \
+# Run the DANN training
+python main.py \
+    --experiment dann \
+    --source_modality $SOURCE_MODALITY \
+    --target_modality $TARGET_MODALITY \
     --data_root $DATA_ROOT \
     --batch_size $BATCH_SIZE \
     --epochs $EPOCHS \
@@ -74,15 +77,14 @@ accelerate launch --num_processes=2 --main_process_port 29502 main.py \
     --experiment_dir $EXPERIMENT_DIR \
     --gradient_accumulation_steps $GRAD_ACCUM_STEPS \
     --mixed_precision fp16 \
-    --loss ce_tversky \
-    --modalities $MODALITIES \
     --dropout_rate $DROPOUT_RATE \
-    --n_samples $N_SAMPLES \
+    --lambda_domain $LAMBDA_DOMAIN \
+    --pretrained_model $PRETRAINED_MODEL \
+    --n_add_source $N_ADD_SOURCE \
+    --n_samples $N_SAMPLES
     # --early_stopping \
     # --patience 25 \
-
-# echo "Deleting scratch disk path: ${dest_path}"
-# rm -rf ${dest_path}
+    
 
 # Print completion message
-echo "Training completed! Check $EXPERIMENT_DIR for experiment results." 
+echo "DANN training completed! Check $EXPERIMENT_DIR for experiment results." 

@@ -17,8 +17,8 @@ echo "I'm running on ${SLURM_JOB_NODELIST}"
 echo "Job started at ${dt}"
 
 # Default values
-MODEL_PATH="experiments/exp_20250801_002447_bs1_ep100_lr0.001_wd0.0001_baseline_mri/checkpoints/best_model_exp_20250801_002447_bs1_ep100_lr0.001_wd0.0001.pth"
-DATA_ROOT="datasets/resampled"
+MODEL_PATH="experiments/a_mixed_experiment/exp_20250704_005127_bs1_ep100_lr0.001_wd0.0001_small/checkpoints/best_model_exp_20250704_005127_bs1_ep100_lr0.001_wd0.0001.pth"
+DATA_ROOT="datasets/mixed_orientation"
 EXPERIMENT_DIR="test_results"
 MODEL_NAME="unet"
 MODALITIES="ct"  # Options: "all", "ct", "mri", "ct,mri"

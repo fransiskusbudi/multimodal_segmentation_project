@@ -14,6 +14,18 @@ from utils.metrics import calculate_dice as torch_calculate_dice, calculate_iou 
 import json
 import csv
 import time
+import random
+
+def set_seed(seed):
+    """Set random seed for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    print(f"Random seed set to: {seed}")
 
 def load_model(model_path, device):
     """Load the trained model."""
@@ -55,17 +67,33 @@ def visualize_prediction(image, label, pred, save_path):
     """
     Visualize prediction with original image and ground truth
     Shows all three views: axial, sagittal, and coronal
+    Finds the best slices that contain organs for better visualization
     """
     label = np.squeeze(label)
     pred = np.squeeze(pred)
     
-    # Get middle slices for each view
-    # For axial view (looking from top), we need the middle slice in the z-direction
-    axial_slice = image.shape[2] // 2
-    # For sagittal view (looking from side), we need the middle slice in the x-direction
-    sagittal_slice = image.shape[0] // 2
-    # For coronal view (looking from front), we need the middle slice in the y-direction
-    coronal_slice = image.shape[1] // 2
+    def find_best_slice(label_volume, axis):
+        """Find the slice with the most organ pixels along a given axis"""
+        if axis == 0:  # sagittal
+            organ_pixels_per_slice = np.sum(label_volume > 0, axis=(1, 2))
+        elif axis == 1:  # coronal
+            organ_pixels_per_slice = np.sum(label_volume > 0, axis=(0, 2))
+        else:  # axial
+            organ_pixels_per_slice = np.sum(label_volume > 0, axis=(0, 1))
+        
+        # Find slice with maximum organ pixels
+        best_slice = np.argmax(organ_pixels_per_slice)
+        
+        # If no organs found, fall back to middle slice
+        if organ_pixels_per_slice[best_slice] == 0:
+            best_slice = label_volume.shape[axis] // 2
+        
+        return best_slice
+    
+    # Find best slices that contain organs for each view
+    axial_slice = find_best_slice(label, 2)  # z-direction for axial
+    sagittal_slice = find_best_slice(label, 0)  # x-direction for sagittal
+    coronal_slice = find_best_slice(label, 1)  # y-direction for coronal
     
     # Create figure with 3x3 subplots (3 views x 3 types)
     fig, axes = plt.subplots(3, 3, figsize=(18, 18))
@@ -196,6 +224,7 @@ def test_model(model, test_loader, accelerator, args):
     test_config_file = os.path.join(results_dir, 'test_config.txt')
     with open(test_config_file, 'w') as f:
         f.write(f"Test Configuration:\n")
+        f.write(f"Seed: {args.seed}\n")
         for arg in vars(args):
             f.write(f"{arg}: {getattr(args, arg)}\n")
     
@@ -340,6 +369,10 @@ def test_model(model, test_loader, accelerator, args):
     print(f"\nOverall Mean - Dice: {overall_metrics['mean_dice_overall']:.4f}, IoU: {overall_metrics['mean_iou_overall']:.4f}")
 
 def main(args):
+    # Set random seed for reproducibility
+    if args.seed is not None:
+        set_seed(args.seed)
+    
     # Initialize accelerator
     accelerator = Accelerator()
     
@@ -375,6 +408,7 @@ if __name__ == "__main__":
     parser.add_argument('--output_dir', type=str, default='test_results', help='Directory to save test results')
     parser.add_argument('--batch_size', type=int, default=1, help='Batch size for testing')
     parser.add_argument('--modalities', type=str, default='all', help='Comma-separated list of modalities to include')
+    parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
     
     args = parser.parse_args()
     
