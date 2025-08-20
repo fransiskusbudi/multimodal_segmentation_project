@@ -2,7 +2,7 @@
 
 This repository contains the implementation for a dissertation project on multimodal medical image segmentation, focusing on domain adaptation and knowledge distillation techniques for improved performance across different imaging modalities (CT and MRI).
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [Overview](#overview)
 - [Project Structure](#project-structure)
@@ -13,7 +13,7 @@ This repository contains the implementation for a dissertation project on multim
 - [Results](#results)
 - [Citation](#citation)
 
-## 🎯 Overview
+## Overview
 
 This project implements and evaluates several approaches for multimodal medical image segmentation:
 
@@ -31,7 +31,7 @@ This project implements and evaluates several approaches for multimodal medical 
 - **Comprehensive Evaluation**: Dice, IoU, and accuracy metrics
 - **Visualization Tools**: Interactive NIfTI visualization and training plots
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 multimodal_segmentation_project/
@@ -71,7 +71,7 @@ multimodal_segmentation_project/
 └── run_*.sh               # SLURM scripts for cluster execution
 ```
 
-## 🚀 Installation
+## Installation
 
 ### Prerequisites
 
@@ -107,7 +107,7 @@ pip install -r requirements.txt
 - **Matplotlib**: Visualization and plotting
 - **NumPy/SciPy**: Scientific computing
 
-## 📊 Dataset Preparation
+## Dataset Preparation
 
 ### Dataset Structure
 
@@ -154,7 +154,7 @@ datasets/resampled/
    - Label 2: Liver
    - Label 3: Kidneys (both left and right)
 
-## 🎮 Usage
+## Usage
 
 ### 1. Baseline Training
 
@@ -247,7 +247,7 @@ Modify the following variables in SLURM scripts:
 - `EPOCHS`: Number of training epochs
 - `LR`: Learning rate
 
-## 📈 Results
+## Results
 
 ### Expected Outputs
 
