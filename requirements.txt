@@ -1,0 +1,26 @@
+# Core deep learning framework
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Accelerate for distributed training and mixed precision
+accelerate>=0.20.0
+
+# Medical image processing
+nibabel>=5.0.0
+monai>=1.2.0
+
+# Scientific computing and data manipulation
+numpy>=1.21.0
+scipy>=1.9.0
+
+# Data loading and processing
+tqdm>=4.64.0
+
+# Visualization
+matplotlib>=3.5.0
+
+# File and path handling
+pathlib2>=2.3.0
+
+# Additional utilities
+Pillow>=9.0.0
