@@ -140,6 +140,7 @@ datasets/resampled/
 
 - **AMOS**: Abdominal Multi-Organ Segmentation
 - **CHAOS**: Combined Healthy Abdominal Organ Segmentation
+- **TotalSegmentator**: TotalSegmentator dataset for comprehensive organ segmentation
 
 ### Data Preprocessing
 
@@ -269,4 +270,4 @@ The evaluation includes:
 1. **Baseline Results**: Run `run_training.sh` with default parameters
 2. **Fine-tuning Results**: Execute fine-tuning scripts with limited data
 3. **Distillation Results**: Run distillation scripts with different sample sizes
-4. **DANN Results**: Execute DANN scripts with varying `n_add_source` values
+4. **DANN Results**: Execute DANN scripts with varying `n_add_source` and `N_SAMPLES` values
