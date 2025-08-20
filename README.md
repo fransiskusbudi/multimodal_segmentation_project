@@ -2,6 +2,8 @@
 
 This repository contains the implementation for a dissertation project on multimodal medical image segmentation, focusing on domain adaptation and knowledge distillation techniques for improved performance across different imaging modalities (CT and MRI).
 
+**GitHub Repository**: [https://github.com/fransiskusbudi/multimodal_segmentation_project](https://github.com/fransiskusbudi/multimodal_segmentation_project)
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -161,10 +163,6 @@ datasets/resampled/
 #### Train on all modalities:
 ```bash
 sbatch run_training.sh
-```
-
-#### Train on specific modality (CT):
-```bash
 sbatch run_training_ct_1.sh    # 1 sample
 sbatch run_training_ct_5.sh    # 5 samples
 sbatch run_training_ct_10.sh   # 10 samples
